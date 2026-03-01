@@ -150,6 +150,22 @@ func (c *Client) StopAll() (StopAllResult, error) {
 	return decodeStopAllResult(resp.Data)
 }
 
+// LogPath sends a "logs" request to the daemon and returns the log file path.
+func (c *Client) LogPath(name string) (string, error) {
+	args := LogsArgs{Name: name}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return "", fmt.Errorf("marshal logs args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "logs", Args: argsJSON})
+	if err != nil {
+		return "", err
+	}
+
+	return decodeLogPath(resp.Data)
+}
+
 // Remove sends an "rm" request to the daemon.
 func (c *Client) Remove(name string, force bool) error {
 	args := RemoveArgs{Name: name, Force: force}
@@ -212,6 +228,23 @@ func decodeStopAllResult(data any) (StopAllResult, error) {
 		return StopAllResult{}, fmt.Errorf("unmarshal stop all result: %w", err)
 	}
 	return result, nil
+}
+
+// decodeLogPath decodes a response data value into a log path string.
+func decodeLogPath(data any) (string, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("re-marshal log path data: %w", err)
+	}
+	var result map[string]string
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("unmarshal log path: %w", err)
+	}
+	path, ok := result["log_path"]
+	if !ok {
+		return "", fmt.Errorf("response missing log_path field")
+	}
+	return path, nil
 }
 
 // sendOnce sends a single request on a new connection and returns the response.

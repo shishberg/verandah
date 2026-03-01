@@ -59,6 +59,11 @@ type StopAllResult struct {
 	Message string  `json:"message"`
 }
 
+// LogsArgs holds the arguments for the "logs" command.
+type LogsArgs struct {
+	Name string `json:"name"`
+}
+
 // RemoveArgs holds the arguments for the "rm" command.
 type RemoveArgs struct {
 	Name  string `json:"name"`
@@ -328,6 +333,8 @@ func (d *Daemon) route(req Request) Response {
 		return d.handleStop(req.Args)
 	case "rm":
 		return d.handleRemove(req.Args)
+	case "logs":
+		return d.handleLogs(req.Args)
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %q", req.Command)}
 	}
@@ -729,6 +736,21 @@ func (d *Daemon) handleRemove(rawArgs json.RawMessage) Response {
 	}
 
 	return Response{OK: true, Data: agent}
+}
+
+func (d *Daemon) handleLogs(rawArgs json.RawMessage) Response {
+	var args LogsArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid logs args: %v", err)}
+	}
+
+	// Validate agent exists.
+	if _, err := d.store.GetAgent(args.Name); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' not found", args.Name)}
+	}
+
+	logPath := filepath.Join(d.vhHome, "logs", args.Name+".log")
+	return Response{OK: true, Data: map[string]string{"log_path": logPath}}
 }
 
 // reconcile checks all agents with status='running' and updates any with

@@ -192,7 +192,7 @@ First end-to-end commands.
   - Remove running agent with --force stops then removes
   - Log file cleaned up on rm
 
-### [ ] 12. `vh logs`
+### [x] 12. `vh logs`
 
 - `cmd/vh/logs.go`: `vh logs <name>` with `--follow/-f`, `--no-follow`, `--lines/-n`
 - CLI reads log file directly (gets path from daemon)
