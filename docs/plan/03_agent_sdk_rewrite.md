@@ -287,7 +287,7 @@ First end-to-end commands.
   - Wait on agent that becomes blocked, exits 1
   - Timeout
 
-### [ ] 15. `vh permission show/allow/deny/answer`
+### [x] 15. `vh permission show/allow/deny/answer`
 
 - `src/cli/commands/permission.ts`: subcommand group
   - `vh permission show <name>` with `--json` — inspect pending request

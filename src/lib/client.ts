@@ -211,6 +211,66 @@ export class Client {
   }
 
   /**
+   * Show pending permission details for a blocked agent.
+   */
+  async permissionShow(name: string): Promise<Record<string, unknown>> {
+    const response = await this.send({
+      command: "permission",
+      args: { name, action: "show" },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "permission show failed");
+    }
+    return response.data!;
+  }
+
+  /**
+   * Allow a pending permission request.
+   */
+  async permissionAllow(name: string): Promise<{ name: string; status: string }> {
+    const response = await this.send({
+      command: "permission",
+      args: { name, action: "allow" },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "permission allow failed");
+    }
+    return response.data as unknown as { name: string; status: string };
+  }
+
+  /**
+   * Deny a pending permission request.
+   */
+  async permissionDeny(name: string, message?: string): Promise<{ name: string; status: string }> {
+    const args: Record<string, unknown> = { name, action: "deny" };
+    if (message) {
+      args.message = message;
+    }
+    const response = await this.send({
+      command: "permission",
+      args,
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "permission deny failed");
+    }
+    return response.data as unknown as { name: string; status: string };
+  }
+
+  /**
+   * Answer an AskUserQuestion permission request.
+   */
+  async permissionAnswer(name: string, answer: string): Promise<{ name: string; status: string }> {
+    const response = await this.send({
+      command: "permission",
+      args: { name, action: "answer", answer },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "permission answer failed");
+    }
+    return response.data as unknown as { name: string; status: string };
+  }
+
+  /**
    * Send a single request without retry. Used internally.
    */
   private sendOnce(request: Request): Promise<Response> {

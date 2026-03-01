@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -336,4 +336,124 @@ export function handleWhoami(
   }
 
   return { ok: true, data: agent as unknown as Record<string, unknown> };
+}
+
+/**
+ * Handle a `permission` command: show, allow, deny, or answer a pending permission.
+ *
+ * Routes based on `args.action`:
+ * - show: return pending permission details
+ * - allow: resolve with { behavior: "allow", updatedInput: toolInput }
+ * - deny: resolve with { behavior: "deny", message }
+ * - answer: validate AskUserQuestion, build answer, resolve
+ */
+export function handlePermission(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const permArgs = args as unknown as PermissionArgs;
+
+  // Look up agent by name.
+  const agent = daemon.store.getAgent(permArgs.name);
+  if (!agent) {
+    return { ok: false, error: `agent '${permArgs.name}' not found` };
+  }
+
+  // For all actions, the agent must be blocked with a pending permission.
+  if (agent.status !== "blocked") {
+    return {
+      ok: false,
+      error: `agent '${permArgs.name}' is not blocked (status: ${agent.status})`,
+    };
+  }
+
+  const runner = daemon.runners.get(permArgs.name);
+  if (!runner || !runner.pendingPermission) {
+    return {
+      ok: false,
+      error: `agent '${permArgs.name}' has no pending permission request`,
+    };
+  }
+
+  const pp = runner.pendingPermission;
+
+  switch (permArgs.action) {
+    case "show": {
+      const now = new Date();
+      const waitingMs = now.getTime() - pp.createdAt.getTime();
+      const timeoutMs = daemon.blockTimeoutMs;
+      const remainingMs = Math.max(0, timeoutMs - waitingMs);
+
+      return {
+        ok: true,
+        data: {
+          id: pp.id,
+          agent: permArgs.name,
+          toolName: pp.toolName,
+          toolInput: pp.toolInput,
+          createdAt: pp.createdAt.toISOString(),
+          waitingMs,
+          timeoutMs,
+          remainingMs,
+        } as unknown as Record<string, unknown>,
+      };
+    }
+
+    case "allow": {
+      runner.resolvePermission({
+        behavior: "allow",
+        updatedInput: pp.toolInput,
+      });
+      return {
+        ok: true,
+        data: { name: permArgs.name, status: "running" } as unknown as Record<string, unknown>,
+      };
+    }
+
+    case "deny": {
+      runner.resolvePermission({
+        behavior: "deny",
+        message: permArgs.message ?? "denied by user",
+      });
+      return {
+        ok: true,
+        data: { name: permArgs.name, status: "running" } as unknown as Record<string, unknown>,
+      };
+    }
+
+    case "answer": {
+      // Validate that the tool is AskUserQuestion.
+      if (pp.toolName !== "AskUserQuestion") {
+        return {
+          ok: false,
+          error: `cannot answer: tool is '${pp.toolName}', not 'AskUserQuestion'`,
+        };
+      }
+
+      if (!permArgs.answer) {
+        return { ok: false, error: "answer is required for AskUserQuestion" };
+      }
+
+      // Build the answer. The toolInput has a `questions` array.
+      const questions = pp.toolInput.questions as Array<{
+        question: string;
+        options?: Array<{ value: string; description?: string }>;
+      }>;
+
+      runner.resolvePermission({
+        behavior: "allow",
+        updatedInput: {
+          questions,
+          answers: [permArgs.answer],
+        },
+      });
+      return {
+        ok: true,
+        data: { name: permArgs.name, status: "running" } as unknown as Record<string, unknown>,
+      };
+    }
+
+    default:
+      return { ok: false, error: `unknown permission action: ${permArgs.action}` };
+  }
 }

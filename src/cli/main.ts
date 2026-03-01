@@ -8,6 +8,7 @@ import { registerRmCommand } from "./commands/rm.js";
 import { registerLogsCommand } from "./commands/logs.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerWaitCommand } from "./commands/wait.js";
+import { registerPermissionCommand } from "./commands/permission.js";
 
 const program = new Command();
 
@@ -25,5 +26,6 @@ registerRmCommand(program);
 registerLogsCommand(program);
 registerWhoamiCommand(program);
 registerWaitCommand(program);
+registerPermissionCommand(program);
 
 program.parse(process.argv);
