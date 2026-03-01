@@ -140,7 +140,7 @@ CLI auto-starts daemon; daemon exits when idle.
 
 ## Phase 2: Agent lifecycle
 
-### [ ] 7. Agent runner (SDK integration)
+### [x] 7. Agent runner (SDK integration)
 
 The core of the rewrite: manage agent lifecycle via the Agent SDK's `query()`.
 

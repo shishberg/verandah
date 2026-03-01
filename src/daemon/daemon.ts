@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { Store } from "../lib/store.js";
 import { dbPath } from "../lib/config.js";
 import type { Request, Response } from "../lib/types.js";
+import { AgentRunner } from "./agent-runner.js";
 
 export type DaemonOptions = {
   /** Idle timeout in milliseconds. Daemon exits when idle for this long. 0 = no timeout. */
@@ -19,6 +20,7 @@ export type DaemonOptions = {
  */
 export class Daemon {
   readonly store: Store;
+  readonly vhHome: string;
   private server: net.Server | null = null;
   private currentSocketPath: string | null = null;
   private idleTimeoutMs: number;
@@ -26,10 +28,31 @@ export class Daemon {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private activeConnections = 0;
 
+  /** Active agent runners, keyed by agent name. */
+  readonly runners: Map<string, AgentRunner> = new Map();
+
   constructor(vhHome: string, options?: DaemonOptions) {
+    this.vhHome = vhHome;
     this.store = new Store(dbPath(vhHome));
     this.idleTimeoutMs = options?.idleTimeout ?? 0;
     this.blockTimeoutMs = options?.blockTimeout ?? 600000; // 10m default
+  }
+
+  /**
+   * Create an AgentRunner and register it in the runners map.
+   * When the runner finishes, it is automatically removed.
+   */
+  createRunner(agentName: string): AgentRunner {
+    const runner = new AgentRunner({
+      store: this.store,
+      vhHome: this.vhHome,
+      blockTimeoutMs: this.blockTimeoutMs,
+      onDone: (name) => {
+        this.runners.delete(name);
+      },
+    });
+    this.runners.set(agentName, runner);
+    return runner;
   }
 
   /**
@@ -60,6 +83,12 @@ export class Daemon {
    */
   async shutdown(): Promise<void> {
     this.clearIdleTimer();
+
+    // Abort all active runners.
+    for (const runner of this.runners.values()) {
+      runner.stop();
+    }
+    this.runners.clear();
 
     return new Promise<void>((resolve) => {
       const cleanup = () => {
