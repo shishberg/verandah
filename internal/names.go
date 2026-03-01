@@ -25,7 +25,7 @@ var nouns = []string{
 	"quokka", "wombat", "platypus", "kookaburra", "echidna",
 	"bilby", "numbat", "dugong", "cassowary", "galah",
 	"budgie", "dingo", "wallaby", "bandicoot", "taipan",
-	"goanna", "thorny-devil", "lyrebird", "magpie", "cockatoo",
+	"goanna", "koala", "lyrebird", "magpie", "cockatoo",
 	// General-purpose animals
 	"falcon", "otter", "badger", "heron", "fox",
 	"hawk", "panda", "raven", "cobra", "crane",
