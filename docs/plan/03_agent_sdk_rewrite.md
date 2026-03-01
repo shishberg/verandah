@@ -242,7 +242,7 @@ First end-to-end commands.
   - Remove with --force stops then removes
   - Log file deleted on remove
 
-### [ ] 12. `vh logs`
+### [x] 12. `vh logs`
 
 - `src/cli/commands/logs.ts`: `vh logs <name>` with `--follow/-f`, `--no-follow`, `--lines/-n`
   - Follow mode: tail log file, poll agent status, exit when agent stops

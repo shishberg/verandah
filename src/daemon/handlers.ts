@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -293,4 +293,30 @@ export async function handleRemove(
   }
 
   return { ok: true };
+}
+
+/**
+ * Handle a `logs` command: return the log file path and agent status.
+ *
+ * The CLI does the actual file reading — this just provides the path
+ * and current status so the CLI knows whether to follow or not.
+ */
+export function handleLogs(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const logsArgs = args as unknown as LogsArgs;
+
+  // Look up agent by name.
+  const agent = daemon.store.getAgent(logsArgs.name);
+  if (!agent) {
+    return { ok: false, error: `agent '${logsArgs.name}' not found` };
+  }
+
+  const path = logPath(logsArgs.name, daemon.vhHome);
+
+  return {
+    ok: true,
+    data: { path, status: agent.status } as unknown as Record<string, unknown>,
+  };
 }

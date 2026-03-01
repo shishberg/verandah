@@ -183,6 +183,20 @@ export class Client {
   }
 
   /**
+   * Get the log file path and current status for an agent.
+   */
+  async logs(name: string): Promise<{ path: string; status: AgentStatus }> {
+    const response = await this.send({
+      command: "logs",
+      args: { name },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "logs failed");
+    }
+    return response.data as unknown as { path: string; status: AgentStatus };
+  }
+
+  /**
    * Send a single request without retry. Used internally.
    */
   private sendOnce(request: Request): Promise<Response> {

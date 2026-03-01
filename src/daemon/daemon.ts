@@ -4,7 +4,7 @@ import { Store } from "../lib/store.js";
 import { dbPath } from "../lib/config.js";
 import type { Agent, Request, Response, WaitArgs } from "../lib/types.js";
 import { AgentRunner } from "./agent-runner.js";
-import { handleNew, handleList, handleSend, handleStop, handleRemove } from "./handlers.js";
+import { handleNew, handleList, handleSend, handleStop, handleRemove, handleLogs } from "./handlers.js";
 
 export type DaemonOptions = {
   /** Idle timeout in milliseconds. Daemon exits when idle for this long. 0 = no timeout. */
@@ -323,5 +323,6 @@ export class Daemon {
     send: (args) => handleSend(this, args),
     stop: (args) => handleStop(this, args),
     rm: (args) => handleRemove(this, args),
+    logs: (args) => handleLogs(this, args),
   };
 }
