@@ -125,6 +125,49 @@ export class Client {
   }
 
   /**
+   * Stop an agent by name. Returns the list of stopped agent names.
+   */
+  async stop(name: string): Promise<string[]> {
+    const response = await this.send({
+      command: "stop",
+      args: { name },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "stop failed");
+    }
+    const data = response.data as unknown as { stopped: string[] };
+    return data.stopped;
+  }
+
+  /**
+   * Stop all running agents. Returns the list of stopped agent names.
+   */
+  async stopAll(): Promise<string[]> {
+    const response = await this.send({
+      command: "stop",
+      args: { all: true },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "stop all failed");
+    }
+    const data = response.data as unknown as { stopped: string[] };
+    return data.stopped;
+  }
+
+  /**
+   * Remove an agent by name. If force is true, stops the agent first.
+   */
+  async remove(name: string, force?: boolean): Promise<void> {
+    const response = await this.send({
+      command: "rm",
+      args: { name, force: force ?? false },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "remove failed");
+    }
+  }
+
+  /**
    * Wait for an agent to reach a terminal status (stopped, failed, blocked).
    * Returns the agent data when it reaches a terminal state.
    */

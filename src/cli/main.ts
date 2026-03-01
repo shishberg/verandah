@@ -3,6 +3,8 @@ import { registerDaemonCommand } from "./commands/daemon.js";
 import { registerNewCommand } from "./commands/new.js";
 import { registerLsCommand } from "./commands/ls.js";
 import { registerSendCommand } from "./commands/send.js";
+import { registerStopCommand } from "./commands/stop.js";
+import { registerRmCommand } from "./commands/rm.js";
 
 const program = new Command();
 
@@ -15,5 +17,7 @@ registerDaemonCommand(program);
 registerNewCommand(program);
 registerLsCommand(program);
 registerSendCommand(program);
+registerStopCommand(program);
+registerRmCommand(program);
 
 program.parse(process.argv);

@@ -222,7 +222,7 @@ First end-to-end commands.
   - `--wait` blocks until stopped
   - Stdin message works
 
-### [ ] 11. `vh stop` + `vh rm`
+### [x] 11. `vh stop` + `vh rm`
 
 - `src/cli/commands/stop.ts`: `vh stop <name>`, `vh stop --all`
 - `src/cli/commands/rm.ts`: `vh rm <name>`, `vh rm --force`
