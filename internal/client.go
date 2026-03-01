@@ -71,6 +71,63 @@ func (c *Client) Ping() error {
 	return err
 }
 
+// New sends a "new" request to the daemon and returns the created agent.
+func (c *Client) New(args NewArgs) (Agent, error) {
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return Agent{}, fmt.Errorf("marshal new args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "new", Args: argsJSON})
+	if err != nil {
+		return Agent{}, err
+	}
+
+	return decodeAgent(resp.Data)
+}
+
+// List sends a "list" request to the daemon and returns the agents.
+func (c *Client) List(status string) ([]Agent, error) {
+	args := ListArgs{Status: status}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("marshal list args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "list", Args: argsJSON})
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeAgents(resp.Data)
+}
+
+// decodeAgent decodes a response data value into an Agent.
+func decodeAgent(data any) (Agent, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return Agent{}, fmt.Errorf("re-marshal agent data: %w", err)
+	}
+	var agent Agent
+	if err := json.Unmarshal(raw, &agent); err != nil {
+		return Agent{}, fmt.Errorf("unmarshal agent: %w", err)
+	}
+	return agent, nil
+}
+
+// decodeAgents decodes a response data value into a slice of Agents.
+func decodeAgents(data any) ([]Agent, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("re-marshal agents data: %w", err)
+	}
+	var agents []Agent
+	if err := json.Unmarshal(raw, &agents); err != nil {
+		return nil, fmt.Errorf("unmarshal agents: %w", err)
+	}
+	return agents, nil
+}
+
 // sendOnce sends a single request on a new connection and returns the response.
 func (c *Client) sendOnce(req Request) (Response, error) {
 	conn, err := net.Dial("unix", c.socketPath)

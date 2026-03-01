@@ -143,7 +143,7 @@ CLI auto-starts daemon; daemon exits when idle.
 
 ## Phase 3: Commands
 
-### [ ] 9. `vh new` + `vh ls`
+### [x] 9. `vh new` + `vh ls`
 
 First end-to-end commands.
 

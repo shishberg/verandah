@@ -15,19 +15,19 @@ const currentSchemaVersion = 2
 
 // Agent represents an agent record in the database.
 type Agent struct {
-	ID             string
-	Name           string
-	SessionID      *string
-	PID            *int
-	Status         string
-	Model          *string
-	CWD            string
-	Prompt         *string
-	PermissionMode *string
-	MaxTurns       *int
-	AllowedTools   *string
-	CreatedAt      time.Time
-	StoppedAt      *time.Time
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	SessionID      *string    `json:"session_id,omitempty"`
+	PID            *int       `json:"pid,omitempty"`
+	Status         string     `json:"status"`
+	Model          *string    `json:"model,omitempty"`
+	CWD            string     `json:"cwd"`
+	Prompt         *string    `json:"prompt,omitempty"`
+	PermissionMode *string    `json:"permission_mode,omitempty"`
+	MaxTurns       *int       `json:"max_turns,omitempty"`
+	AllowedTools   *string    `json:"allowed_tools,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	StoppedAt      *time.Time `json:"stopped_at,omitempty"`
 }
 
 // AgentUpdate holds optional fields for updating an agent.
@@ -49,22 +49,15 @@ type Store struct {
 
 // NewStore opens the SQLite database at dbPath, runs migrations, and returns a Store.
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	// Enable WAL mode for better concurrency.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set journal mode: %w", err)
-	}
-
-	// Enable foreign keys.
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
+	// Limit to a single connection to avoid SQLITE_BUSY with modernc.org/sqlite.
+	// All access is serialized through the daemon anyway.
+	db.SetMaxOpenConns(1)
 
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {

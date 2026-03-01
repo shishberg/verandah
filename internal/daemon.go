@@ -9,9 +9,30 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
+
+// namePattern matches valid agent names.
+var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// NewArgs holds the arguments for the "new" command.
+type NewArgs struct {
+	Name           string  `json:"name"`
+	Prompt         *string `json:"prompt"`
+	CWD            string  `json:"cwd"`
+	Model          *string `json:"model"`
+	PermissionMode *string `json:"permission_mode"`
+	MaxTurns       *int    `json:"max_turns"`
+	AllowedTools   *string `json:"allowed_tools"`
+	Interactive    bool    `json:"interactive"`
+}
+
+// ListArgs holds the arguments for the "list" command.
+type ListArgs struct {
+	Status string `json:"status"`
+}
 
 // Request represents a JSON request from a client.
 type Request struct {
@@ -266,6 +287,10 @@ func (d *Daemon) route(req Request) Response {
 	switch req.Command {
 	case "ping":
 		return d.handlePing(req.Args)
+	case "new":
+		return d.handleNew(req.Args)
+	case "list":
+		return d.handleList(req.Args)
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %q", req.Command)}
 	}
@@ -273,6 +298,221 @@ func (d *Daemon) route(req Request) Response {
 
 func (d *Daemon) handlePing(_ json.RawMessage) Response {
 	return Response{OK: true, Data: map[string]string{"status": "ok"}}
+}
+
+func (d *Daemon) handleNew(rawArgs json.RawMessage) Response {
+	var args NewArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid new args: %v", err)}
+	}
+
+	// Generate or validate name.
+	name := args.Name
+	if name == "" {
+		existing, err := d.store.ListAgents("")
+		if err != nil {
+			return Response{OK: false, Error: fmt.Sprintf("list agents for name generation: %v", err)}
+		}
+		names := make([]string, len(existing))
+		for i, a := range existing {
+			names[i] = a.Name
+		}
+		generated, err := GenerateUniqueName(names)
+		if err != nil {
+			return Response{OK: false, Error: fmt.Sprintf("generate name: %v", err)}
+		}
+		name = generated
+	} else {
+		// Validate name format.
+		if len(name) > 64 {
+			return Response{OK: false, Error: "agent name must be at most 64 characters"}
+		}
+		if !namePattern.MatchString(name) {
+			return Response{OK: false, Error: "agent name must match [a-zA-Z0-9][a-zA-Z0-9_-]*"}
+		}
+	}
+
+	// Check uniqueness.
+	if _, err := d.store.GetAgent(name); err == nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' already exists", name)}
+	}
+
+	agent := Agent{
+		Name:           name,
+		CWD:            args.CWD,
+		Model:          args.Model,
+		Prompt:         args.Prompt,
+		PermissionMode: args.PermissionMode,
+		MaxTurns:       args.MaxTurns,
+		AllowedTools:   args.AllowedTools,
+		CreatedAt:      time.Now(),
+	}
+
+	if args.Prompt == nil {
+		// Create only, no process.
+		agent.Status = "created"
+		if err := d.store.CreateAgent(agent); err != nil {
+			return Response{OK: false, Error: fmt.Sprintf("create agent: %v", err)}
+		}
+		return Response{OK: true, Data: agent}
+	}
+
+	// Create and run.
+	agent.Status = "running"
+	if err := d.store.CreateAgent(agent); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("create agent: %v", err)}
+	}
+
+	// Build and start the claude process.
+	cmd := d.claudeCfg.BuildSpawnCommand(agent)
+	logPath := filepath.Join(d.vhHome, "logs", name+".log")
+
+	pid, err := d.procMgr.Start(cmd, logPath)
+	if err != nil {
+		// Update status to failed since we couldn't start.
+		failed := "failed"
+		now := time.Now()
+		_ = d.store.UpdateAgent(name, AgentUpdate{
+			Status:    &failed,
+			StoppedAt: ptrTo(&now),
+		})
+		return Response{OK: false, Error: fmt.Sprintf("start process: %v", err)}
+	}
+
+	// Update agent with PID.
+	if err := d.store.UpdateAgent(name, AgentUpdate{
+		PID: ptrTo(&pid),
+	}); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("update agent PID: %v", err)}
+	}
+	agent.PID = &pid
+
+	// Background goroutine to extract session_id and wait for exit.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.watchAgent(name, pid, logPath)
+	}()
+
+	return Response{OK: true, Data: agent}
+}
+
+// watchAgent reads the log file to extract session_id, then waits for the
+// process to exit and updates the agent status.
+func (d *Daemon) watchAgent(name string, pid int, logPath string) {
+	// Try to extract session_id from the log file.
+	sessionID := d.extractSessionID(logPath, pid)
+	if sessionID != "" {
+		if err := d.store.UpdateAgent(name, AgentUpdate{
+			SessionID: ptrTo(&sessionID),
+		}); err != nil {
+			log.Printf("update session_id for %q: %v", name, err)
+		}
+	}
+
+	// Wait for the process to exit.
+	result := <-d.procMgr.Wait(pid)
+
+	now := time.Now()
+	status := "stopped"
+	if result.ExitCode != 0 {
+		status = "failed"
+	}
+	if err := d.store.UpdateAgent(name, AgentUpdate{
+		Status:    &status,
+		StoppedAt: ptrTo(&now),
+	}); err != nil {
+		log.Printf("update agent %q after exit: %v", name, err)
+	}
+}
+
+// extractSessionID polls the log file for the first JSON event and extracts
+// the session_id. It retries for up to 5 seconds with 100ms intervals.
+func (d *Daemon) extractSessionID(logPath string, pid int) string {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		f, err := os.Open(logPath)
+		if err != nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		scanner := bufio.NewScanner(f)
+		if scanner.Scan() {
+			line := scanner.Text()
+			_ = f.Close()
+			if line != "" {
+				var event Event
+				if err := json.Unmarshal([]byte(line), &event); err == nil && event.SessionID != "" {
+					return event.SessionID
+				}
+			}
+		} else {
+			_ = f.Close()
+		}
+
+		// Check if process is still alive; if not, stop waiting.
+		if !d.procMgr.IsAlive(pid) {
+			// Process exited. Try one final read.
+			f, err := os.Open(logPath)
+			if err != nil {
+				return ""
+			}
+			defer func() { _ = f.Close() }()
+			scanner := bufio.NewScanner(f)
+			if scanner.Scan() {
+				line := scanner.Text()
+				if line != "" {
+					var event Event
+					if err := json.Unmarshal([]byte(line), &event); err == nil {
+						return event.SessionID
+					}
+				}
+			}
+			return ""
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+	return ""
+}
+
+func (d *Daemon) handleList(rawArgs json.RawMessage) Response {
+	var args ListArgs
+	if rawArgs != nil {
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return Response{OK: false, Error: fmt.Sprintf("invalid list args: %v", err)}
+		}
+	}
+
+	agents, err := d.store.ListAgents(StatusFilter(args.Status))
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("list agents: %v", err)}
+	}
+
+	// Verify running agents' PIDs are still alive.
+	for i, agent := range agents {
+		if agent.Status == "running" {
+			alive := false
+			if agent.PID != nil {
+				alive = d.procMgr.IsAlive(*agent.PID)
+			}
+			if !alive {
+				now := time.Now()
+				stopped := "stopped"
+				if err := d.store.UpdateAgent(agent.Name, AgentUpdate{
+					Status:    &stopped,
+					StoppedAt: ptrTo(&now),
+				}); err != nil {
+					log.Printf("update stale agent %q: %v", agent.Name, err)
+				}
+				agents[i].Status = "stopped"
+				agents[i].StoppedAt = &now
+			}
+		}
+	}
+
+	return Response{OK: true, Data: agents}
 }
 
 // reconcile checks all agents with status='running' and updates any with
