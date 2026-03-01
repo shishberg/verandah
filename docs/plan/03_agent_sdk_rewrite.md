@@ -103,7 +103,7 @@ Port the Australian-biased adjective-noun generator.
   - Format validation (`adjective-noun`)
   - Uniqueness under collision (mock Math.random)
 
-### [ ] 5. Daemon core + client
+### [x] 5. Daemon core + client
 
 Unix socket server and client. No command handlers yet — just ping.
 
