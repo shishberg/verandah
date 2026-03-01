@@ -100,8 +100,8 @@ export function registerNewCommand(program: Command): void {
           // Session was started with a prompt. Print progress hint.
           console.log(`${agent.name} (started) \u2014 use 'vh logs ${agent.name}' to watch progress`);
 
-          // Poll for early failure (up to 3 seconds).
-          const earlyError = await pollForEarlyError(client, agent.name, 3000);
+          // Poll for early failure (up to 1 second).
+          const earlyError = await pollForEarlyError(client, agent.name, 1000);
           if (earlyError) {
             process.stderr.write(`error: ${earlyError}\n`);
             process.exitCode = 1;
@@ -208,7 +208,7 @@ async function pollForEarlyError(
   name: string,
   timeoutMs: number,
 ): Promise<string | null> {
-  const pollInterval = 300;
+  const pollInterval = 200;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {

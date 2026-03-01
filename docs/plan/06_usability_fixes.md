@@ -33,7 +33,7 @@ Currently `vh stop --all` prints "no sessions to stop" to stdout and exits 0, bu
 - When a named session isn't found, continue to exit 1 (that's an error)
 - Update or add test for this behavior
 
-### [ ] 3. Reduce `vh new` early-error poll delay
+### [x] 3. Reduce `vh new` early-error poll delay
 
 The 3-second `pollForEarlyError` makes `vh new --prompt` feel sluggish. The progress hint line prints immediately but the command blocks for up to 3s before returning.
 
