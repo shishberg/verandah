@@ -4,6 +4,13 @@ import { Store } from "../lib/store.js";
 import { dbPath } from "../lib/config.js";
 import type { Request, Response } from "../lib/types.js";
 
+export type DaemonOptions = {
+  /** Idle timeout in milliseconds. Daemon exits when idle for this long. 0 = no timeout. */
+  idleTimeout?: number;
+  /** Block timeout in milliseconds. Stored for use by agent runner (task 7). */
+  blockTimeout?: number;
+};
+
 /**
  * Unix socket daemon that manages agent state and processes.
  *
@@ -14,9 +21,15 @@ export class Daemon {
   readonly store: Store;
   private server: net.Server | null = null;
   private currentSocketPath: string | null = null;
+  private idleTimeoutMs: number;
+  readonly blockTimeoutMs: number;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeConnections = 0;
 
-  constructor(vhHome: string) {
+  constructor(vhHome: string, options?: DaemonOptions) {
     this.store = new Store(dbPath(vhHome));
+    this.idleTimeoutMs = options?.idleTimeout ?? 0;
+    this.blockTimeoutMs = options?.blockTimeout ?? 600000; // 10m default
   }
 
   /**
@@ -35,6 +48,7 @@ export class Daemon {
       });
 
       this.server.listen(socketPath, () => {
+        this.resetIdleTimer();
         resolve();
       });
     });
@@ -45,6 +59,8 @@ export class Daemon {
    * and remove the socket file.
    */
   async shutdown(): Promise<void> {
+    this.clearIdleTimer();
+
     return new Promise<void>((resolve) => {
       const cleanup = () => {
         this.store.close();
@@ -64,6 +80,39 @@ export class Daemon {
       } else {
         cleanup();
       }
+    });
+  }
+
+  /**
+   * Reset the idle timer. Called on each client connection
+   * and when the daemon starts.
+   */
+  resetIdleTimer(): void {
+    this.clearIdleTimer();
+    if (this.idleTimeoutMs > 0) {
+      this.idleTimer = setTimeout(() => {
+        this.onIdleTimeout();
+      }, this.idleTimeoutMs);
+      // Don't let the timer keep the process alive if nothing else is holding it.
+      this.idleTimer.unref();
+    }
+  }
+
+  private clearIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  private onIdleTimeout(): void {
+    // Don't shut down if there are active connections.
+    if (this.activeConnections > 0) {
+      this.resetIdleTimer();
+      return;
+    }
+    this.shutdown().then(() => {
+      process.exit(0);
     });
   }
 
@@ -97,6 +146,9 @@ export class Daemon {
    * routes to handlers, and sends JSON responses.
    */
   private handleConnection(conn: net.Socket): void {
+    this.activeConnections++;
+    this.resetIdleTimer();
+
     let buffer = "";
 
     conn.on("data", (data) => {
@@ -130,6 +182,11 @@ export class Daemon {
 
     conn.on("error", () => {
       // Client disconnected unexpectedly; nothing to do.
+    });
+
+    conn.on("close", () => {
+      this.activeConnections--;
+      this.resetIdleTimer();
     });
   }
 

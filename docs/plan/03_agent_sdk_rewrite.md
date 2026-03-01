@@ -123,7 +123,7 @@ Unix socket server and client. No command handlers yet — just ping.
   - Shutdown daemon, verify socket removed
   - Stale status reconciliation on startup
 
-### [ ] 6. Auto-start and idle shutdown
+### [x] 6. Auto-start and idle shutdown
 
 CLI auto-starts daemon; daemon exits when idle.
 
