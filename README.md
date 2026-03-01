@@ -4,6 +4,8 @@ A CLI tool for managing Claude Code agent processes. Spawn agents, send them mes
 
 **Status: pre-alpha / in development**
 
+![verandah](https://github.com/user-attachments/assets/54d64820-f8e8-4def-a773-7cdebca26106)
+
 ## Overview
 
 Verandah (`vh`) manages Claude Code agents as named sessions. Each agent is a Claude Code process with a working directory — the orchestrator handles the lifecycle so you can run multiple agents concurrently.
