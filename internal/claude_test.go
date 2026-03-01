@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -441,21 +442,15 @@ func assertArgsContain(t *testing.T, args []string, flag, value string) {
 // assertArgsNotContain checks that args does not contain the given flag.
 func assertArgsNotContain(t *testing.T, args []string, flag string) {
 	t.Helper()
-	for _, a := range args {
-		if a == flag {
-			t.Errorf("args %v should not contain %s", args, flag)
-			return
-		}
+	if slices.Contains(args, flag) {
+		t.Errorf("args %v should not contain %s", args, flag)
 	}
 }
 
 // assertEnvContains checks that the env slice contains the given key=value entry.
 func assertEnvContains(t *testing.T, env []string, entry string) {
 	t.Helper()
-	for _, e := range env {
-		if e == entry {
-			return
-		}
+	if !slices.Contains(env, entry) {
+		t.Errorf("env does not contain %q", entry)
 	}
-	t.Errorf("env does not contain %q", entry)
 }

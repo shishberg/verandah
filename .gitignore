@@ -1,2 +1,4 @@
 bin/
 .dev/
+go.work
+go.work.sum
