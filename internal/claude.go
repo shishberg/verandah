@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // ClaudeConfig holds settings for building claude commands.
@@ -19,7 +20,7 @@ type ClaudeConfig struct {
 // BuildSpawnCommand builds a `claude -p ... --output-format stream-json ...` command.
 func (c *ClaudeConfig) BuildSpawnCommand(agent Agent) *exec.Cmd {
 	args := []string{"-p", derefString(agent.Prompt)}
-	args = append(args, "--output-format", "stream-json")
+	args = append(args, "--output-format", "stream-json", "--verbose")
 	if agent.Model != nil {
 		args = append(args, "--model", *agent.Model)
 	}
@@ -43,7 +44,7 @@ func (c *ClaudeConfig) BuildSpawnCommand(agent Agent) *exec.Cmd {
 func (c *ClaudeConfig) BuildResumeCommand(agent Agent, message string) *exec.Cmd {
 	args := []string{"--resume", derefString(agent.SessionID)}
 	args = append(args, "-p", message)
-	args = append(args, "--output-format", "stream-json")
+	args = append(args, "--output-format", "stream-json", "--verbose")
 	if agent.Model != nil {
 		args = append(args, "--model", *agent.Model)
 	}
@@ -78,9 +79,16 @@ func (c *ClaudeConfig) BuildInteractiveCommand(agent Agent) *exec.Cmd {
 }
 
 // buildEnv returns the current environment with CLAUDE_CONFIG_DIR set to VH_HOME/.claude/.
+// It removes CLAUDECODE so spawned agents aren't rejected as nested sessions.
 func (c *ClaudeConfig) buildEnv() []string {
-	env := os.Environ()
 	configDir := filepath.Join(c.VHHome, ".claude")
+	var env []string
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "CLAUDECODE=") {
+			continue
+		}
+		env = append(env, e)
+	}
 	env = append(env, fmt.Sprintf("CLAUDE_CONFIG_DIR=%s", configDir))
 	return env
 }
