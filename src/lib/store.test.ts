@@ -4,7 +4,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { Store } from "./store.js";
-import type { AgentStatus } from "./types.js";
 
 describe("Store", () => {
   let store: Store;
@@ -20,27 +19,27 @@ describe("Store", () => {
   describe("migration", () => {
     it("creates schema on fresh database", () => {
       // The store was opened in beforeEach — the schema should exist.
-      // Verify by creating an agent (would throw if table doesn't exist).
-      const agent = store.createAgent({ name: "test", cwd: "/tmp" });
-      expect(agent.name).toBe("test");
+      // Verify by creating a session (would throw if table doesn't exist).
+      const session = store.createSession({ name: "test", cwd: "/tmp" });
+      expect(session.name).toBe("test");
     });
 
     it("is idempotent — opening twice on same DB is fine", () => {
       // Close and reopen on the same in-memory DB won't work (memory is gone),
       // but we can verify the constructor doesn't throw on a fresh DB.
       const store2 = new Store(":memory:");
-      const agent = store2.createAgent({ name: "test", cwd: "/tmp" });
-      expect(agent.name).toBe("test");
+      const session = store2.createSession({ name: "test", cwd: "/tmp" });
+      expect(session.name).toBe("test");
       store2.close();
     });
 
-    it("migrates v1 database to v2 adding last_error column", () => {
+    it("migrates v1 database to v3 via v2", () => {
       // Create a real v1 database on disk.
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-store-test-"));
       const dbPath = path.join(tmpDir, "test.db");
 
       try {
-        // Manually create a v1 schema.
+        // Manually create a v1 schema (old agents table without last_error).
         const db = new Database(dbPath);
         db.exec(`
           CREATE TABLE schema_version (version INTEGER NOT NULL);
@@ -67,15 +66,106 @@ describe("Store", () => {
         ).run();
         db.close();
 
-        // Open with Store — should run v2 migration.
+        // Open with Store — should run v2 and v3 migrations.
         const store2 = new Store(dbPath);
-        const agent = store2.getAgent("old-agent");
-        expect(agent).not.toBeNull();
-        expect(agent!.lastError).toBeNull();
+        const session = store2.getSession("old-agent");
+        expect(session).not.toBeNull();
+        expect(session!.lastError).toBeNull();
+        // Session shape should not have status or stoppedAt.
+        expect(session!).not.toHaveProperty("status");
+        expect(session!).not.toHaveProperty("stoppedAt");
 
         // Verify we can set lastError on the migrated record.
-        store2.updateAgent("old-agent", { lastError: "error_max_turns" });
-        expect(store2.getAgent("old-agent")!.lastError).toBe("error_max_turns");
+        store2.updateSession("old-agent", { lastError: "error_max_turns" });
+        expect(store2.getSession("old-agent")!.lastError).toBe("error_max_turns");
+
+        // Verify schema version is 3.
+        const db2 = new Database(dbPath);
+        const version = db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number };
+        expect(version.version).toBe(3);
+
+        // Verify sessions table exists and agents table does not.
+        const tables = db2.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
+        const tableNames = tables.map((t) => t.name);
+        expect(tableNames).toContain("sessions");
+        expect(tableNames).not.toContain("agents");
+        db2.close();
+
+        store2.close();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("migrates v2 database to v3", () => {
+      // Create a real v2 database on disk.
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-store-test-"));
+      const dbPath = path.join(tmpDir, "test.db");
+
+      try {
+        // Manually create a v2 schema (agents table with last_error).
+        const db = new Database(dbPath);
+        db.exec(`
+          CREATE TABLE schema_version (version INTEGER NOT NULL);
+          INSERT INTO schema_version (version) VALUES (2);
+
+          CREATE TABLE agents (
+            id              TEXT PRIMARY KEY,
+            name            TEXT UNIQUE NOT NULL,
+            session_id      TEXT,
+            status          TEXT NOT NULL DEFAULT 'created',
+            model           TEXT,
+            cwd             TEXT NOT NULL,
+            prompt          TEXT,
+            permission_mode TEXT,
+            max_turns       INTEGER,
+            allowed_tools   TEXT,
+            last_error      TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            stopped_at      TEXT
+          );
+        `);
+        // Insert rows with various statuses and data.
+        db.prepare(
+          "INSERT INTO agents (id, name, cwd, status, last_error, session_id) VALUES ('id1', 'session-a', '/tmp', 'running', NULL, 'sess-123')",
+        ).run();
+        db.prepare(
+          "INSERT INTO agents (id, name, cwd, status, last_error, stopped_at) VALUES ('id2', 'session-b', '/work', 'failed', 'error_max_turns', '2025-01-15T10:00:00')",
+        ).run();
+        db.close();
+
+        // Open with Store — should run v3 migration.
+        const store2 = new Store(dbPath);
+
+        // Verify both sessions migrated correctly.
+        const sessA = store2.getSession("session-a");
+        expect(sessA).not.toBeNull();
+        expect(sessA!.sessionId).toBe("sess-123");
+        expect(sessA!.lastError).toBeNull();
+        expect(sessA!).not.toHaveProperty("status");
+        expect(sessA!).not.toHaveProperty("stoppedAt");
+
+        const sessB = store2.getSession("session-b");
+        expect(sessB).not.toBeNull();
+        expect(sessB!.lastError).toBe("error_max_turns");
+        expect(sessB!).not.toHaveProperty("status");
+        expect(sessB!).not.toHaveProperty("stoppedAt");
+
+        // Verify list works.
+        const all = store2.listSessions();
+        expect(all).toHaveLength(2);
+
+        // Verify schema version is 3.
+        const db2 = new Database(dbPath);
+        const version = db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number };
+        expect(version.version).toBe(3);
+
+        // Verify sessions table exists and agents table does not.
+        const tables = db2.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
+        const tableNames = tables.map((t) => t.name);
+        expect(tableNames).toContain("sessions");
+        expect(tableNames).not.toContain("agents");
+        db2.close();
 
         store2.close();
       } finally {
@@ -84,27 +174,28 @@ describe("Store", () => {
     });
   });
 
-  describe("createAgent", () => {
-    it("creates an agent with required fields", () => {
-      const agent = store.createAgent({ name: "alpha", cwd: "/home/user" });
+  describe("createSession", () => {
+    it("creates a session with required fields", () => {
+      const session = store.createSession({ name: "alpha", cwd: "/home/user" });
 
-      expect(agent.id).toBeTruthy();
-      expect(agent.name).toBe("alpha");
-      expect(agent.cwd).toBe("/home/user");
-      expect(agent.status).toBe("created");
-      expect(agent.sessionId).toBeNull();
-      expect(agent.model).toBeNull();
-      expect(agent.prompt).toBeNull();
-      expect(agent.permissionMode).toBeNull();
-      expect(agent.maxTurns).toBeNull();
-      expect(agent.allowedTools).toBeNull();
-      expect(agent.lastError).toBeNull();
-      expect(agent.createdAt).toBeTruthy();
-      expect(agent.stoppedAt).toBeNull();
+      expect(session.id).toBeTruthy();
+      expect(session.name).toBe("alpha");
+      expect(session.cwd).toBe("/home/user");
+      expect(session.sessionId).toBeNull();
+      expect(session.model).toBeNull();
+      expect(session.prompt).toBeNull();
+      expect(session.permissionMode).toBeNull();
+      expect(session.maxTurns).toBeNull();
+      expect(session.allowedTools).toBeNull();
+      expect(session.lastError).toBeNull();
+      expect(session.createdAt).toBeTruthy();
+      // Session shape should not have status or stoppedAt.
+      expect(session).not.toHaveProperty("status");
+      expect(session).not.toHaveProperty("stoppedAt");
     });
 
-    it("creates an agent with all optional fields", () => {
-      const agent = store.createAgent({
+    it("creates a session with all optional fields", () => {
+      const session = store.createSession({
         name: "beta",
         cwd: "/workspace",
         prompt: "do something",
@@ -114,17 +205,17 @@ describe("Store", () => {
         allowedTools: "Bash,Read",
       });
 
-      expect(agent.name).toBe("beta");
-      expect(agent.prompt).toBe("do something");
-      expect(agent.model).toBe("haiku");
-      expect(agent.permissionMode).toBe("auto");
-      expect(agent.maxTurns).toBe(10);
-      expect(agent.allowedTools).toBe("Bash,Read");
+      expect(session.name).toBe("beta");
+      expect(session.prompt).toBe("do something");
+      expect(session.model).toBe("haiku");
+      expect(session.permissionMode).toBe("auto");
+      expect(session.maxTurns).toBe(10);
+      expect(session.allowedTools).toBe("Bash,Read");
     });
 
-    it("generates a unique ULID for each agent", () => {
-      const a = store.createAgent({ name: "a", cwd: "/tmp" });
-      const b = store.createAgent({ name: "b", cwd: "/tmp" });
+    it("generates a unique ULID for each session", () => {
+      const a = store.createSession({ name: "a", cwd: "/tmp" });
+      const b = store.createSession({ name: "b", cwd: "/tmp" });
       expect(a.id).not.toBe(b.id);
       // ULIDs are 26 characters
       expect(a.id).toHaveLength(26);
@@ -132,230 +223,191 @@ describe("Store", () => {
     });
 
     it("throws on duplicate name", () => {
-      store.createAgent({ name: "dup", cwd: "/tmp" });
-      expect(() => store.createAgent({ name: "dup", cwd: "/tmp" })).toThrow();
+      store.createSession({ name: "dup", cwd: "/tmp" });
+      expect(() => store.createSession({ name: "dup", cwd: "/tmp" })).toThrow();
     });
   });
 
-  describe("getAgent", () => {
-    it("returns an agent by name", () => {
-      store.createAgent({ name: "findme", cwd: "/tmp" });
-      const agent = store.getAgent("findme");
-      expect(agent).not.toBeNull();
-      expect(agent!.name).toBe("findme");
+  describe("getSession", () => {
+    it("returns a session by name", () => {
+      store.createSession({ name: "findme", cwd: "/tmp" });
+      const session = store.getSession("findme");
+      expect(session).not.toBeNull();
+      expect(session!.name).toBe("findme");
     });
 
     it("returns null for non-existent name", () => {
-      const agent = store.getAgent("nonexistent");
-      expect(agent).toBeNull();
+      const session = store.getSession("nonexistent");
+      expect(session).toBeNull();
     });
   });
 
-  describe("listAgents", () => {
-    it("returns all agents when no filter", () => {
-      store.createAgent({ name: "a", cwd: "/tmp" });
-      store.createAgent({ name: "b", cwd: "/tmp" });
-      store.createAgent({ name: "c", cwd: "/tmp" });
+  describe("listSessions", () => {
+    it("returns all sessions", () => {
+      store.createSession({ name: "a", cwd: "/tmp" });
+      store.createSession({ name: "b", cwd: "/tmp" });
+      store.createSession({ name: "c", cwd: "/tmp" });
 
-      const agents = store.listAgents();
-      expect(agents).toHaveLength(3);
+      const sessions = store.listSessions();
+      expect(sessions).toHaveLength(3);
     });
 
-    it("returns empty list when no agents", () => {
-      const agents = store.listAgents();
-      expect(agents).toHaveLength(0);
+    it("returns empty list when no sessions", () => {
+      const sessions = store.listSessions();
+      expect(sessions).toHaveLength(0);
     });
 
-    it("filters by status", () => {
-      store.createAgent({ name: "a", cwd: "/tmp" });
-      store.createAgent({ name: "b", cwd: "/tmp" });
-      store.updateAgent("b", { status: "running" });
+    it("returns sessions ordered by created_at", () => {
+      store.createSession({ name: "first", cwd: "/tmp" });
+      store.createSession({ name: "second", cwd: "/tmp" });
+      store.createSession({ name: "third", cwd: "/tmp" });
 
-      const created = store.listAgents("created");
-      expect(created).toHaveLength(1);
-      expect(created[0].name).toBe("a");
-
-      const running = store.listAgents("running");
-      expect(running).toHaveLength(1);
-      expect(running[0].name).toBe("b");
-
-      const stopped = store.listAgents("stopped");
-      expect(stopped).toHaveLength(0);
-    });
-
-    it("returns agents ordered by created_at", () => {
-      store.createAgent({ name: "first", cwd: "/tmp" });
-      store.createAgent({ name: "second", cwd: "/tmp" });
-      store.createAgent({ name: "third", cwd: "/tmp" });
-
-      const agents = store.listAgents();
-      expect(agents[0].name).toBe("first");
-      expect(agents[1].name).toBe("second");
-      expect(agents[2].name).toBe("third");
+      const sessions = store.listSessions();
+      expect(sessions[0].name).toBe("first");
+      expect(sessions[1].name).toBe("second");
+      expect(sessions[2].name).toBe("third");
     });
   });
 
-  describe("updateAgent", () => {
+  describe("updateSession", () => {
     it("updates a single field", () => {
-      store.createAgent({ name: "u1", cwd: "/tmp" });
-      const updated = store.updateAgent("u1", { status: "running" });
+      store.createSession({ name: "u1", cwd: "/tmp" });
+      const updated = store.updateSession("u1", { sessionId: "sess-123" });
 
       expect(updated).not.toBeNull();
-      expect(updated!.status).toBe("running");
+      expect(updated!.sessionId).toBe("sess-123");
       expect(updated!.name).toBe("u1");
     });
 
     it("updates multiple fields", () => {
-      store.createAgent({ name: "u2", cwd: "/tmp" });
-      const updated = store.updateAgent("u2", {
-        status: "stopped",
+      store.createSession({ name: "u2", cwd: "/tmp" });
+      const updated = store.updateSession("u2", {
         sessionId: "sess-123",
-        stoppedAt: "2025-01-15T10:00:00",
+        model: "sonnet",
       });
 
-      expect(updated!.status).toBe("stopped");
       expect(updated!.sessionId).toBe("sess-123");
-      expect(updated!.stoppedAt).toBe("2025-01-15T10:00:00");
+      expect(updated!.model).toBe("sonnet");
     });
 
     it("updates model field", () => {
-      store.createAgent({ name: "u3", cwd: "/tmp" });
-      const updated = store.updateAgent("u3", { model: "sonnet" });
+      store.createSession({ name: "u3", cwd: "/tmp" });
+      const updated = store.updateSession("u3", { model: "sonnet" });
       expect(updated!.model).toBe("sonnet");
     });
 
     it("updates permissionMode field", () => {
-      store.createAgent({ name: "u4", cwd: "/tmp" });
-      const updated = store.updateAgent("u4", {
+      store.createSession({ name: "u4", cwd: "/tmp" });
+      const updated = store.updateSession("u4", {
         permissionMode: "bypassPermissions",
       });
       expect(updated!.permissionMode).toBe("bypassPermissions");
     });
 
     it("updates maxTurns field", () => {
-      store.createAgent({ name: "u5", cwd: "/tmp" });
-      const updated = store.updateAgent("u5", { maxTurns: 25 });
+      store.createSession({ name: "u5", cwd: "/tmp" });
+      const updated = store.updateSession("u5", { maxTurns: 25 });
       expect(updated!.maxTurns).toBe(25);
     });
 
     it("updates allowedTools field", () => {
-      store.createAgent({ name: "u6", cwd: "/tmp" });
-      const updated = store.updateAgent("u6", {
+      store.createSession({ name: "u6", cwd: "/tmp" });
+      const updated = store.updateSession("u6", {
         allowedTools: "Bash,Read,Write",
       });
       expect(updated!.allowedTools).toBe("Bash,Read,Write");
     });
 
     it("updates lastError field", () => {
-      store.createAgent({ name: "u-err", cwd: "/tmp" });
-      const updated = store.updateAgent("u-err", {
+      store.createSession({ name: "u-err", cwd: "/tmp" });
+      const updated = store.updateSession("u-err", {
         lastError: "error_max_turns",
       });
       expect(updated!.lastError).toBe("error_max_turns");
     });
 
     it("clears lastError to null", () => {
-      store.createAgent({ name: "u-err2", cwd: "/tmp" });
-      store.updateAgent("u-err2", { lastError: "error_max_turns" });
-      expect(store.getAgent("u-err2")!.lastError).toBe("error_max_turns");
+      store.createSession({ name: "u-err2", cwd: "/tmp" });
+      store.updateSession("u-err2", { lastError: "error_max_turns" });
+      expect(store.getSession("u-err2")!.lastError).toBe("error_max_turns");
 
-      const updated = store.updateAgent("u-err2", { lastError: null });
+      const updated = store.updateSession("u-err2", { lastError: null });
       expect(updated!.lastError).toBeNull();
     });
 
     it("can set a field to null", () => {
-      store.createAgent({
+      store.createSession({
         name: "u7",
         cwd: "/tmp",
         model: "haiku",
       });
-      expect(store.getAgent("u7")!.model).toBe("haiku");
+      expect(store.getSession("u7")!.model).toBe("haiku");
 
-      const updated = store.updateAgent("u7", { model: null });
+      const updated = store.updateSession("u7", { model: null });
       expect(updated!.model).toBeNull();
     });
 
-    it("returns null for non-existent agent", () => {
-      const updated = store.updateAgent("ghost", { status: "running" });
+    it("returns null for non-existent session", () => {
+      const updated = store.updateSession("ghost", { sessionId: "sess-123" });
       expect(updated).toBeNull();
     });
 
-    it("returns current agent when no fields provided", () => {
-      store.createAgent({ name: "u8", cwd: "/tmp" });
-      const updated = store.updateAgent("u8", {});
+    it("returns current session when no fields provided", () => {
+      store.createSession({ name: "u8", cwd: "/tmp" });
+      const updated = store.updateSession("u8", {});
       expect(updated).not.toBeNull();
       expect(updated!.name).toBe("u8");
     });
 
     it("preserves fields not being updated", () => {
-      store.createAgent({
+      store.createSession({
         name: "u9",
         cwd: "/workspace",
         model: "haiku",
         prompt: "test prompt",
       });
 
-      const updated = store.updateAgent("u9", { status: "running" });
-      expect(updated!.status).toBe("running");
+      const updated = store.updateSession("u9", { sessionId: "sess-new" });
+      expect(updated!.sessionId).toBe("sess-new");
       expect(updated!.model).toBe("haiku");
       expect(updated!.prompt).toBe("test prompt");
       expect(updated!.cwd).toBe("/workspace");
     });
   });
 
-  describe("deleteAgent", () => {
-    it("deletes an existing agent", () => {
-      store.createAgent({ name: "doomed", cwd: "/tmp" });
-      expect(store.getAgent("doomed")).not.toBeNull();
+  describe("deleteSession", () => {
+    it("deletes an existing session", () => {
+      store.createSession({ name: "doomed", cwd: "/tmp" });
+      expect(store.getSession("doomed")).not.toBeNull();
 
-      const deleted = store.deleteAgent("doomed");
+      const deleted = store.deleteSession("doomed");
       expect(deleted).toBe(true);
-      expect(store.getAgent("doomed")).toBeNull();
+      expect(store.getSession("doomed")).toBeNull();
     });
 
-    it("returns false for non-existent agent", () => {
-      const deleted = store.deleteAgent("ghost");
+    it("returns false for non-existent session", () => {
+      const deleted = store.deleteSession("ghost");
       expect(deleted).toBe(false);
     });
 
-    it("agent no longer appears in list after deletion", () => {
-      store.createAgent({ name: "listed", cwd: "/tmp" });
-      expect(store.listAgents()).toHaveLength(1);
+    it("session no longer appears in list after deletion", () => {
+      store.createSession({ name: "listed", cwd: "/tmp" });
+      expect(store.listSessions()).toHaveLength(1);
 
-      store.deleteAgent("listed");
-      expect(store.listAgents()).toHaveLength(0);
+      store.deleteSession("listed");
+      expect(store.listSessions()).toHaveLength(0);
     });
   });
 
   describe("createdAt UTC suffix", () => {
     it("returns createdAt as ISO 8601 with Z suffix", () => {
-      const agent = store.createAgent({ name: "utc-test", cwd: "/tmp" });
+      const session = store.createSession({ name: "utc-test", cwd: "/tmp" });
       // SQLite datetime('now') returns 'YYYY-MM-DD HH:MM:SS' without Z.
       // The store should normalize it to ISO 8601 with Z.
-      expect(agent.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+      expect(session.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
       // Parsing should give a valid UTC date.
-      const parsed = new Date(agent.createdAt);
+      const parsed = new Date(session.createdAt);
       expect(parsed.getTime()).not.toBeNaN();
     });
-  });
-
-  describe("status values", () => {
-    const statuses: AgentStatus[] = [
-      "created",
-      "running",
-      "stopped",
-      "failed",
-      "blocked",
-    ];
-
-    for (const status of statuses) {
-      it(`supports status "${status}"`, () => {
-        const name = `agent-${status}`;
-        store.createAgent({ name, cwd: "/tmp" });
-        store.updateAgent(name, { status });
-        const agent = store.getAgent(name);
-        expect(agent!.status).toBe(status);
-      });
-    }
   });
 });

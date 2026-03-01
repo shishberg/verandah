@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { Client } from "../lib/client.js";
-import type { Agent } from "../lib/types.js";
+import type { SessionWithStatus } from "../lib/types.js";
 
 // Mock the SDK module.
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -104,7 +104,7 @@ describe("Wait infrastructure integration", () => {
     }
   });
 
-  it("wait on running agent resolves when agent stops", async () => {
+  it("wait on running session resolves when session becomes idle", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -113,8 +113,8 @@ describe("Wait infrastructure integration", () => {
     const ctrl = createControllableResponse();
     mockQuery.mockImplementation(() => ctrl.generator);
 
-    // Create an agent and start it.
-    const agent = daemon.store.createAgent({ name: "alpha", cwd: "/tmp" });
+    // Create a session and start it.
+    const agent = daemon.store.createSession({ name: "alpha", cwd: "/tmp" });
     const runner = daemon.createRunner("alpha");
     runner.start(agent, "hello");
 
@@ -125,7 +125,7 @@ describe("Wait infrastructure integration", () => {
     // Give the wait request time to register.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Agent finishes: push a result message.
+    // Session finishes: push a result message.
     ctrl.push({
       type: "result",
       subtype: "success",
@@ -144,35 +144,31 @@ describe("Wait infrastructure integration", () => {
     });
     ctrl.done();
 
-    // The wait should resolve with the stopped agent.
+    // The wait should resolve with the idle session.
     const response = await waitPromise;
     expect(response.ok).toBe(true);
-    expect((response.data as unknown as Agent).name).toBe("alpha");
-    expect((response.data as unknown as Agent).status).toBe("stopped");
+    expect((response.data as unknown as SessionWithStatus).name).toBe("alpha");
+    expect((response.data as unknown as SessionWithStatus).status).toBe("idle");
   });
 
-  it("wait on already-stopped agent resolves immediately", async () => {
+  it("wait on already-idle session resolves immediately", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
     await daemon.start(socketFile);
 
-    // Create an agent that is already stopped.
-    daemon.store.createAgent({ name: "beta", cwd: "/tmp" });
-    daemon.store.updateAgent("beta", {
-      status: "stopped",
-      stoppedAt: new Date().toISOString(),
-    });
+    // Create a session (no runner, derives as idle).
+    daemon.store.createSession({ name: "beta", cwd: "/tmp" });
 
     const client = new Client(socketFile);
     const response = await client.send({ command: "wait", args: { name: "beta" } });
 
     expect(response.ok).toBe(true);
-    expect((response.data as unknown as Agent).name).toBe("beta");
-    expect((response.data as unknown as Agent).status).toBe("stopped");
+    expect((response.data as unknown as SessionWithStatus).name).toBe("beta");
+    expect((response.data as unknown as SessionWithStatus).status).toBe("idle");
   });
 
-  it("wait on agent that becomes blocked resolves with blocked status", async () => {
+  it("wait on session that becomes blocked resolves with blocked status", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -195,8 +191,8 @@ describe("Wait infrastructure integration", () => {
       },
     );
 
-    // Create and start an agent.
-    const agent = daemon.store.createAgent({ name: "gamma", cwd: "/tmp" });
+    // Create and start a session.
+    const agent = daemon.store.createSession({ name: "gamma", cwd: "/tmp" });
     const runner = daemon.createRunner("gamma");
     runner.start(agent, "go");
 
@@ -219,7 +215,7 @@ describe("Wait infrastructure integration", () => {
     // Give the wait request time to register.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Trigger a permission request, which blocks the agent.
+    // Trigger a permission request, which blocks the session.
     expect(capturedCanUseTool).toBeDefined();
     // Don't await — this simulates the SDK calling canUseTool in the background.
     capturedCanUseTool("Bash", { command: "ls" });
@@ -227,8 +223,8 @@ describe("Wait infrastructure integration", () => {
     // The wait should resolve with blocked status.
     const response = await waitPromise;
     expect(response.ok).toBe(true);
-    expect((response.data as unknown as Agent).name).toBe("gamma");
-    expect((response.data as unknown as Agent).status).toBe("blocked");
+    expect((response.data as unknown as SessionWithStatus).name).toBe("gamma");
+    expect((response.data as unknown as SessionWithStatus).status).toBe("blocked");
 
     // Clean up: resolve the permission and finish the runner.
     runner.resolvePermission({ behavior: "deny", message: "test" });
@@ -236,7 +232,7 @@ describe("Wait infrastructure integration", () => {
     await runner.queryPromise;
   });
 
-  it("multiple concurrent waiters on same agent all resolve", async () => {
+  it("multiple concurrent waiters on same session all resolve", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -245,8 +241,8 @@ describe("Wait infrastructure integration", () => {
     const ctrl = createControllableResponse();
     mockQuery.mockImplementation(() => ctrl.generator);
 
-    // Create and start an agent.
-    const agent = daemon.store.createAgent({ name: "delta", cwd: "/tmp" });
+    // Create and start a session.
+    const agent = daemon.store.createSession({ name: "delta", cwd: "/tmp" });
     const runner = daemon.createRunner("delta");
     runner.start(agent, "hello");
 
@@ -265,7 +261,7 @@ describe("Wait infrastructure integration", () => {
     // All three should be registered.
     expect(daemon.waiters.get("delta")?.size).toBe(3);
 
-    // Agent finishes.
+    // Session finishes.
     ctrl.push({
       type: "result",
       subtype: "success",
@@ -288,17 +284,17 @@ describe("Wait infrastructure integration", () => {
     const [r1, r2, r3] = await Promise.all([wait1, wait2, wait3]);
 
     expect(r1.ok).toBe(true);
-    expect((r1.data as unknown as Agent).status).toBe("stopped");
+    expect((r1.data as unknown as SessionWithStatus).status).toBe("idle");
     expect(r2.ok).toBe(true);
-    expect((r2.data as unknown as Agent).status).toBe("stopped");
+    expect((r2.data as unknown as SessionWithStatus).status).toBe("idle");
     expect(r3.ok).toBe(true);
-    expect((r3.data as unknown as Agent).status).toBe("stopped");
+    expect((r3.data as unknown as SessionWithStatus).status).toBe("idle");
 
     // Waiters should be cleared.
     expect(daemon.waiters.get("delta")?.size ?? 0).toBe(0);
   });
 
-  it("wait on non-existent agent returns error", async () => {
+  it("wait on non-existent session returns error", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -308,44 +304,41 @@ describe("Wait infrastructure integration", () => {
     const response = await client.send({ command: "wait", args: { name: "nonexistent" } });
 
     expect(response.ok).toBe(false);
-    expect(response.error).toContain("agent 'nonexistent' not found");
+    expect(response.error).toContain("session 'nonexistent' not found");
   });
 
-  it("wait on agent with 'created' status resolves immediately", async () => {
+  it("wait on idle session (never started) resolves immediately", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
     await daemon.start(socketFile);
 
-    // Create an agent but don't start it (status stays 'created').
-    daemon.store.createAgent({ name: "epsilon", cwd: "/tmp" });
+    // Create a session but don't start it (derives as 'idle').
+    daemon.store.createSession({ name: "epsilon", cwd: "/tmp" });
 
     const client = new Client(socketFile);
     const response = await client.send({ command: "wait", args: { name: "epsilon" } });
 
     expect(response.ok).toBe(true);
-    expect((response.data as unknown as Agent).name).toBe("epsilon");
-    expect((response.data as unknown as Agent).status).toBe("created");
+    expect((response.data as unknown as SessionWithStatus).name).toBe("epsilon");
+    expect((response.data as unknown as SessionWithStatus).status).toBe("idle");
   });
 
-  it("wait on agent with 'failed' status resolves immediately", async () => {
+  it("wait on session with 'failed' status resolves immediately", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
     await daemon.start(socketFile);
 
-    // Create a failed agent.
-    daemon.store.createAgent({ name: "zeta", cwd: "/tmp" });
-    daemon.store.updateAgent("zeta", {
-      status: "failed",
-      stoppedAt: new Date().toISOString(),
-    });
+    // Create a failed session (lastError set, no runner).
+    daemon.store.createSession({ name: "zeta", cwd: "/tmp" });
+    daemon.store.updateSession("zeta", { lastError: "some_error" });
 
     const client = new Client(socketFile);
     const response = await client.send({ command: "wait", args: { name: "zeta" } });
 
     expect(response.ok).toBe(true);
-    expect((response.data as unknown as Agent).name).toBe("zeta");
-    expect((response.data as unknown as Agent).status).toBe("failed");
+    expect((response.data as unknown as SessionWithStatus).name).toBe("zeta");
+    expect((response.data as unknown as SessionWithStatus).status).toBe("failed");
   });
 });

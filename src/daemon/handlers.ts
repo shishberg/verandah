@@ -1,35 +1,47 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, Response, SessionStatus } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
-/** Regex for validating agent names. */
+/** Regex for validating session names. */
 const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 const NAME_MAX_LENGTH = 64;
 
 /**
- * Validate an agent name. Returns an error message if invalid, or null if valid.
+ * Validate a session name. Returns an error message if invalid, or null if valid.
  */
 function validateName(name: string): string | null {
   if (name.length === 0) {
-    return "agent name must not be empty";
+    return "session name must not be empty";
   }
   if (name.length > NAME_MAX_LENGTH) {
-    return `agent name must be at most ${NAME_MAX_LENGTH} characters`;
+    return `session name must be at most ${NAME_MAX_LENGTH} characters`;
   }
   if (!NAME_PATTERN.test(name)) {
-    return "agent name must match [a-zA-Z0-9][a-zA-Z0-9_-]*";
+    return "session name must match [a-zA-Z0-9][a-zA-Z0-9_-]*";
   }
   return null;
 }
 
 /**
- * Handle a `new` command: create an agent and optionally start it.
+ * Map legacy status filter values to SessionStatus.
+ * "created" and "stopped" both map to "idle" for CLI compatibility.
+ * This legacy mapping will be removed in task 5.
+ */
+function mapLegacyStatus(status: string): SessionStatus {
+  if (status === "created" || status === "stopped") {
+    return "idle";
+  }
+  return status as SessionStatus;
+}
+
+/**
+ * Handle a `new` command: create a session and optionally start it.
  *
- * - Without `--prompt`: creates agent with `created` status, returns immediately.
- * - With `--prompt`: creates agent, starts runner, returns immediately (runner runs in background).
- * - With `--interactive`: creates agent record, returns immediately. The CLI handles
+ * - Without `--prompt`: creates session with `idle` derived status, returns immediately.
+ * - With `--prompt`: creates session, starts runner, returns immediately (runner runs in background).
+ * - With `--interactive`: creates session record, returns immediately. The CLI handles
  *   exec'ing claude and sends notify-start/notify-exit to update status.
  */
 export function handleNew(
@@ -38,7 +50,7 @@ export function handleNew(
 ): Response {
   const newArgs = args as unknown as NewArgs;
 
-  // Interactive mode: create agent record and return immediately.
+  // Interactive mode: create session record and return immediately.
   // The CLI handles exec'ing claude and sending notify-start/notify-exit.
   if (newArgs.interactive) {
     // Interactive mode does not use a prompt.
@@ -47,7 +59,7 @@ export function handleNew(
     }
   }
 
-  // Resolve the agent name.
+  // Resolve the session name.
   let name: string;
   if (newArgs.name !== undefined) {
     const nameError = validateName(newArgs.name);
@@ -57,8 +69,8 @@ export function handleNew(
     name = newArgs.name;
   } else {
     // Generate a unique random name.
-    const existingAgents = daemon.store.listAgents();
-    const existingNames = existingAgents.map((a) => a.name);
+    const existingSessions = daemon.store.listSessions();
+    const existingNames = existingSessions.map((s) => s.name);
     try {
       name = generateUniqueName(existingNames);
     } catch {
@@ -67,16 +79,16 @@ export function handleNew(
   }
 
   // Check for name collision.
-  const existing = daemon.store.getAgent(name);
+  const existing = daemon.store.getSession(name);
   if (existing) {
-    return { ok: false, error: `agent '${name}' already exists` };
+    return { ok: false, error: `session '${name}' already exists` };
   }
 
   // Resolve cwd.
   const cwd = newArgs.cwd ?? process.cwd();
 
-  // Create the agent record.
-  const agent = daemon.store.createAgent({
+  // Create the session record.
+  const sess = daemon.store.createSession({
     name,
     cwd,
     prompt: newArgs.prompt ?? null,
@@ -89,32 +101,49 @@ export function handleNew(
   // If a prompt was provided, start the runner.
   if (newArgs.prompt) {
     const runner = daemon.createRunner(name);
-    runner.start(agent, newArgs.prompt);
+    runner.start(sess, newArgs.prompt);
   }
 
-  return { ok: true, data: agent as unknown as Record<string, unknown> };
+  // Return session with derived status.
+  const session = daemon.sessionWithStatus(sess);
+  return { ok: true, data: session as unknown as Record<string, unknown> };
 }
 
 /**
- * Handle a `list` command: return all agents, optionally filtered by status.
+ * Handle a `list` command: return all sessions, optionally filtered by status.
+ * Derives status from in-memory state. Supports legacy "created"/"stopped" filters
+ * by mapping them to "idle" (removed in task 5).
  */
 export function handleList(
   daemon: Daemon,
   args: Record<string, unknown>,
 ): Response {
   const listArgs = args as unknown as ListArgs;
-  const agents = daemon.store.listAgents(listArgs.status);
+
+  // Fetch all sessions from store (no status filter at DB level).
+  const allSessions = daemon.store.listSessions();
+
+  // Derive status for each session.
+  const sessions = allSessions.map((s) => daemon.sessionWithStatus(s));
+
+  // Filter in memory if a status filter was provided.
+  let filtered = sessions;
+  if (listArgs.status) {
+    const targetStatus = mapLegacyStatus(listArgs.status);
+    filtered = sessions.filter((s) => s.status === targetStatus);
+  }
+
   return {
     ok: true,
-    data: { agents: agents as unknown as Record<string, unknown>[] } as unknown as Record<string, unknown>,
+    data: { agents: filtered as unknown as Record<string, unknown>[] } as unknown as Record<string, unknown>,
   };
 }
 
 /**
- * Handle a `send` command: send a message to an existing agent.
+ * Handle a `send` command: send a message to an existing session.
  *
- * - `created` status (never started): store message as prompt, start runner.
- * - `stopped` or `failed` status: resume runner with message.
+ * - `idle` status (never started or finished): start or resume.
+ * - `failed` status: resume or fresh start.
  * - `running` status: error.
  * - `blocked` status: error with guidance.
  */
@@ -124,60 +153,67 @@ export function handleSend(
 ): Response {
   const sendArgs = args as unknown as SendArgs;
 
-  // Look up agent by name.
-  const agent = daemon.store.getAgent(sendArgs.name);
-  if (!agent) {
-    return { ok: false, error: `agent '${sendArgs.name}' not found` };
+  // Look up session by name.
+  const sess = daemon.store.getSession(sendArgs.name);
+  if (!sess) {
+    return { ok: false, error: `session '${sendArgs.name}' not found` };
   }
 
-  switch (agent.status) {
+  // Derive status from activeQueries.
+  const session = daemon.sessionWithStatus(sess);
+
+  switch (session.status) {
     case "running":
-      return { ok: false, error: `agent '${sendArgs.name}' is already running` };
+      return { ok: false, error: `session '${sendArgs.name}' is already running` };
 
     case "blocked":
       return {
         ok: false,
-        error: `agent '${sendArgs.name}' is blocked waiting for approval. Use 'vh permission allow ${sendArgs.name}' to unblock it.`,
+        error: `session '${sendArgs.name}' is blocked waiting for approval. Use 'vh permission allow ${sendArgs.name}' to unblock it.`,
       };
 
-    case "created": {
-      // Agent was created but never started. Store message as prompt and start.
-      daemon.store.updateAgent(agent.name, { prompt: sendArgs.message });
-      const updatedAgent = daemon.store.getAgent(agent.name)!;
-      const runner = daemon.createRunner(agent.name);
-      runner.start(updatedAgent, sendArgs.message);
-      // Re-read agent to get the updated status (running).
-      const result = daemon.store.getAgent(agent.name)!;
+    case "idle": {
+      if (sess.sessionId) {
+        // Has a session — resume.
+        const runner = daemon.createRunner(sess.name);
+        runner.resume(sess, sendArgs.message);
+      } else {
+        // No session — store message as prompt and start fresh.
+        daemon.store.updateSession(sess.name, { prompt: sendArgs.message });
+        const updatedSess = daemon.store.getSession(sess.name)!;
+        const runner = daemon.createRunner(sess.name);
+        runner.start(updatedSess, sendArgs.message);
+      }
+      const result = daemon.sessionWithStatus(daemon.store.getSession(sess.name)!);
       return { ok: true, data: result as unknown as Record<string, unknown> };
     }
 
-    case "stopped":
     case "failed": {
-      // Resume the agent with the new message.
-      const runner = daemon.createRunner(agent.name);
-      if (agent.sessionId) {
-        runner.resume(agent, sendArgs.message);
+      // Resume the session with the new message.
+      const runner = daemon.createRunner(sess.name);
+      if (sess.sessionId) {
+        runner.resume(sess, sendArgs.message);
       } else {
         // No session — treat like a fresh start.
-        daemon.store.updateAgent(agent.name, { prompt: sendArgs.message });
-        const freshAgent = daemon.store.getAgent(agent.name)!;
-        runner.start(freshAgent, sendArgs.message);
+        daemon.store.updateSession(sess.name, { prompt: sendArgs.message });
+        const freshSess = daemon.store.getSession(sess.name)!;
+        runner.start(freshSess, sendArgs.message);
       }
-      const result = daemon.store.getAgent(agent.name)!;
+      const result = daemon.sessionWithStatus(daemon.store.getSession(sess.name)!);
       return { ok: true, data: result as unknown as Record<string, unknown> };
     }
 
     default:
-      return { ok: false, error: `unexpected agent status: ${agent.status}` };
+      return { ok: false, error: `unexpected session status: ${session.status}` };
   }
 }
 
 /**
- * Handle a `stop` command: stop one or all agents.
+ * Handle a `stop` command: stop one or all sessions.
  *
  * - `args.all`: iterate all runners, stop each, wait for queryPromise to settle.
- * - `args.name`: stop a single agent by name.
- * - If agent is already stopped/failed/created: no-op, return success.
+ * - `args.name`: stop a single session by name.
+ * - If session has no active query: no-op, return success.
  */
 export async function handleStop(
   daemon: Daemon,
@@ -189,7 +225,7 @@ export async function handleStop(
     const stopped: string[] = [];
     const promises: Promise<void>[] = [];
 
-    for (const [name, runner] of daemon.runners) {
+    for (const [name, runner] of daemon.activeQueries) {
       runner.stop();
       if (runner.queryPromise) {
         promises.push(runner.queryPromise.catch(() => {}));
@@ -210,32 +246,26 @@ export async function handleStop(
     return { ok: false, error: "either name or --all is required" };
   }
 
-  const agent = daemon.store.getAgent(stopArgs.name);
-  if (!agent) {
-    return { ok: false, error: `agent '${stopArgs.name}' not found` };
+  const sess = daemon.store.getSession(stopArgs.name);
+  if (!sess) {
+    return { ok: false, error: `session '${stopArgs.name}' not found` };
   }
 
-  // If agent is already in a terminal state, no-op.
-  if (agent.status === "stopped" || agent.status === "failed" || agent.status === "created") {
+  // If no active query, it's a no-op.
+  if (!daemon.activeQueries.has(stopArgs.name)) {
     return {
       ok: true,
       data: { stopped: [stopArgs.name] } as unknown as Record<string, unknown>,
     };
   }
 
-  // Stop the runner if it exists.
-  const runner = daemon.runners.get(stopArgs.name);
+  // Stop the runner.
+  const runner = daemon.activeQueries.get(stopArgs.name);
   if (runner) {
     runner.stop();
     if (runner.queryPromise) {
       await runner.queryPromise.catch(() => {});
     }
-  } else {
-    // No runner but status is running/blocked — update directly.
-    daemon.store.updateAgent(stopArgs.name, {
-      status: "stopped",
-      stoppedAt: new Date().toISOString(),
-    });
   }
 
   return {
@@ -245,11 +275,11 @@ export async function handleStop(
 }
 
 /**
- * Handle an `rm` command: remove an agent and its log file.
+ * Handle an `rm` command: remove a session and its log file.
  *
- * - If agent not found: error.
- * - If agent is running/blocked and no force: error.
- * - If force and running/blocked: stop first, then remove.
+ * - If session not found: error.
+ * - If session has an active query and no force: error.
+ * - If force and active query: stop first, then remove.
  * - Remove: delete from store + delete log file.
  */
 export async function handleRemove(
@@ -258,37 +288,32 @@ export async function handleRemove(
 ): Promise<Response> {
   const rmArgs = args as unknown as RemoveArgs;
 
-  const agent = daemon.store.getAgent(rmArgs.name);
-  if (!agent) {
-    return { ok: false, error: `agent '${rmArgs.name}' not found` };
+  const sess = daemon.store.getSession(rmArgs.name);
+  if (!sess) {
+    return { ok: false, error: `session '${rmArgs.name}' not found` };
   }
 
-  // If agent is running or blocked, require --force.
-  if (agent.status === "running" || agent.status === "blocked") {
+  // If session has an active query, require --force.
+  if (daemon.activeQueries.has(rmArgs.name)) {
     if (!rmArgs.force) {
       return {
         ok: false,
-        error: `agent '${rmArgs.name}' is running. Use --force to stop and remove.`,
+        error: `session '${rmArgs.name}' is running. Use --force to stop and remove.`,
       };
     }
 
-    // Stop the agent first.
-    const runner = daemon.runners.get(rmArgs.name);
+    // Stop the session first.
+    const runner = daemon.activeQueries.get(rmArgs.name);
     if (runner) {
       runner.stop();
       if (runner.queryPromise) {
         await runner.queryPromise.catch(() => {});
       }
-    } else {
-      daemon.store.updateAgent(rmArgs.name, {
-        status: "stopped",
-        stoppedAt: new Date().toISOString(),
-      });
     }
   }
 
   // Delete from store.
-  daemon.store.deleteAgent(rmArgs.name);
+  daemon.store.deleteSession(rmArgs.name);
 
   // Delete log file if it exists.
   try {
@@ -301,7 +326,7 @@ export async function handleRemove(
 }
 
 /**
- * Handle a `logs` command: return the log file path and agent status.
+ * Handle a `logs` command: return the log file path and session status.
  *
  * The CLI does the actual file reading — this just provides the path
  * and current status so the CLI knows whether to follow or not.
@@ -312,22 +337,23 @@ export function handleLogs(
 ): Response {
   const logsArgs = args as unknown as LogsArgs;
 
-  // Look up agent by name.
-  const agent = daemon.store.getAgent(logsArgs.name);
-  if (!agent) {
-    return { ok: false, error: `agent '${logsArgs.name}' not found` };
+  // Look up session by name.
+  const sess = daemon.store.getSession(logsArgs.name);
+  if (!sess) {
+    return { ok: false, error: `session '${logsArgs.name}' not found` };
   }
 
   const path = logPath(logsArgs.name, daemon.vhHome);
+  const session = daemon.sessionWithStatus(sess);
 
   return {
     ok: true,
-    data: { path, status: agent.status } as unknown as Record<string, unknown>,
+    data: { path, status: session.status } as unknown as Record<string, unknown>,
   };
 }
 
 /**
- * Handle a `whoami` command: look up an agent by name and return its data.
+ * Handle a `whoami` command: look up a session by name and return its data.
  */
 export function handleWhoami(
   daemon: Daemon,
@@ -335,12 +361,13 @@ export function handleWhoami(
 ): Response {
   const whoamiArgs = args as unknown as WhoamiArgs;
 
-  const agent = daemon.store.getAgent(whoamiArgs.name);
-  if (!agent) {
-    return { ok: false, error: `agent '${whoamiArgs.name}' not found` };
+  const sess = daemon.store.getSession(whoamiArgs.name);
+  if (!sess) {
+    return { ok: false, error: `session '${whoamiArgs.name}' not found` };
   }
 
-  return { ok: true, data: agent as unknown as Record<string, unknown> };
+  const session = daemon.sessionWithStatus(sess);
+  return { ok: true, data: session as unknown as Record<string, unknown> };
 }
 
 /**
@@ -358,25 +385,18 @@ export function handlePermission(
 ): Response {
   const permArgs = args as unknown as PermissionArgs;
 
-  // Look up agent by name.
-  const agent = daemon.store.getAgent(permArgs.name);
-  if (!agent) {
-    return { ok: false, error: `agent '${permArgs.name}' not found` };
+  // Look up session by name.
+  const sess = daemon.store.getSession(permArgs.name);
+  if (!sess) {
+    return { ok: false, error: `session '${permArgs.name}' not found` };
   }
 
-  // For all actions, the agent must be blocked with a pending permission.
-  if (agent.status !== "blocked") {
-    return {
-      ok: false,
-      error: `agent '${permArgs.name}' is not blocked (status: ${agent.status})`,
-    };
-  }
-
-  const runner = daemon.runners.get(permArgs.name);
+  // Check if there's an active runner with a pending permission.
+  const runner = daemon.activeQueries.get(permArgs.name);
   if (!runner || !runner.pendingPermission) {
     return {
       ok: false,
-      error: `agent '${permArgs.name}' has no pending permission request`,
+      error: `session '${permArgs.name}' has no pending permission request`,
     };
   }
 
@@ -464,9 +484,11 @@ export function handlePermission(
 }
 
 /**
- * Handle a `notify-start` command: mark an agent as running.
+ * Handle a `notify-start` command: verify a session exists (interactive mode).
  *
  * Sent by the CLI after launching an interactive claude session.
+ * Since status is derived from in-memory state and there's no runner
+ * for interactive sessions, we just verify the session exists.
  */
 export function handleNotifyStart(
   daemon: Daemon,
@@ -474,24 +496,19 @@ export function handleNotifyStart(
 ): Response {
   const { name } = args as unknown as NotifyStartArgs;
 
-  const agent = daemon.store.getAgent(name);
-  if (!agent) {
-    return { ok: false, error: `agent '${name}' not found` };
+  const sess = daemon.store.getSession(name);
+  if (!sess) {
+    return { ok: false, error: `session '${name}' not found` };
   }
-
-  if (agent.status !== "created") {
-    return { ok: false, error: `agent '${name}' is not in created status (status: ${agent.status})` };
-  }
-
-  daemon.store.updateAgent(name, { status: "running" });
 
   return { ok: true };
 }
 
 /**
- * Handle a `notify-exit` command: mark an agent as stopped.
+ * Handle a `notify-exit` command: update session after interactive exit.
  *
  * Sent by the CLI after an interactive claude session exits.
+ * Sets lastError on non-zero exit, clears on success.
  */
 export function handleNotifyExit(
   daemon: Daemon,
@@ -499,16 +516,21 @@ export function handleNotifyExit(
 ): Response {
   const { name, exitCode } = args as unknown as NotifyExitArgs;
 
-  const agent = daemon.store.getAgent(name);
-  if (!agent) {
-    return { ok: false, error: `agent '${name}' not found` };
+  const sess = daemon.store.getSession(name);
+  if (!sess) {
+    return { ok: false, error: `session '${name}' not found` };
   }
 
-  const status = exitCode === 0 ? "stopped" : "failed";
-  daemon.store.updateAgent(name, {
-    status,
-    stoppedAt: new Date().toISOString(),
-  });
+  // Set lastError on non-zero exit, clear on success.
+  if (exitCode !== 0) {
+    daemon.store.updateSession(name, {
+      lastError: `exit_code_${exitCode}`,
+    });
+  } else {
+    daemon.store.updateSession(name, {
+      lastError: null,
+    });
+  }
 
   // Notify any waiters.
   daemon.notifyWaiters(name);

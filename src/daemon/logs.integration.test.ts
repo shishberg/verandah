@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { Client } from "../lib/client.js";
 import { logPath } from "../lib/config.js";
-import type { AgentStatus } from "../lib/types.js";
+import type { SessionStatus } from "../lib/types.js";
 
 // Mock the SDK module.
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -144,7 +144,7 @@ describe("vh logs integration", () => {
 
     // Verify agent is stopped.
     const agents = await client.list();
-    expect(agents[0].status).toBe("stopped");
+    expect(agents[0].status).toBe("idle");
 
     // Get logs via daemon handler.
     const logsResp = await client.send({
@@ -152,8 +152,8 @@ describe("vh logs integration", () => {
       args: { name: "alpha" },
     });
     expect(logsResp.ok).toBe(true);
-    const data = logsResp.data as unknown as { path: string; status: AgentStatus };
-    expect(data.status).toBe("stopped");
+    const data = logsResp.data as unknown as { path: string; status: SessionStatus };
+    expect(data.status).toBe("idle");
 
     // Verify the log file exists and has content.
     expect(fs.existsSync(data.path)).toBe(true);
@@ -193,8 +193,8 @@ describe("vh logs integration", () => {
       args: { name: "nologs" },
     });
     expect(logsResp.ok).toBe(true);
-    const data = logsResp.data as unknown as { path: string; status: AgentStatus };
-    expect(data.status).toBe("created");
+    const data = logsResp.data as unknown as { path: string; status: SessionStatus };
+    expect(data.status).toBe("idle");
 
     // Log file should not exist.
     expect(fs.existsSync(data.path)).toBe(false);
@@ -220,7 +220,7 @@ describe("vh logs integration", () => {
       args: { name: "pathtest" },
     });
     expect(logsResp.ok).toBe(true);
-    const data = logsResp.data as unknown as { path: string; status: AgentStatus };
+    const data = logsResp.data as unknown as { path: string; status: SessionStatus };
 
     // Verify the path matches the expected pattern.
     const expectedPath = logPath("pathtest", vhHome);
@@ -240,7 +240,7 @@ describe("vh logs integration", () => {
 
     const client = new Client(socketFile);
 
-    // Created agent — should have "created" status.
+    // Created agent — should have "idle" status.
     await client.send({
       command: "new",
       args: { name: "statustest", cwd: "/tmp" },
@@ -251,8 +251,8 @@ describe("vh logs integration", () => {
       args: { name: "statustest" },
     });
     expect(logsResp.ok).toBe(true);
-    let data = logsResp.data as unknown as { path: string; status: AgentStatus };
-    expect(data.status).toBe("created");
+    let data = logsResp.data as unknown as { path: string; status: SessionStatus };
+    expect(data.status).toBe("idle");
 
     // Start the agent by sending a message.
     await client.send({
@@ -269,8 +269,8 @@ describe("vh logs integration", () => {
       args: { name: "statustest" },
     });
     expect(logsResp.ok).toBe(true);
-    data = logsResp.data as unknown as { path: string; status: AgentStatus };
-    expect(data.status).toBe("stopped");
+    data = logsResp.data as unknown as { path: string; status: SessionStatus };
+    expect(data.status).toBe("idle");
   });
 
   it("logs on non-existent agent returns error", async () => {
@@ -286,7 +286,7 @@ describe("vh logs integration", () => {
       args: { name: "nonexistent" },
     });
     expect(logsResp.ok).toBe(false);
-    expect(logsResp.error).toContain("agent 'nonexistent' not found");
+    expect(logsResp.error).toContain("session 'nonexistent' not found");
   });
 
   it("client logs convenience method works", async () => {
@@ -303,7 +303,7 @@ describe("vh logs integration", () => {
     // Use convenience method.
     const result = await client.logs("conv-logs");
     expect(result.path).toBe(logPath("conv-logs", vhHome));
-    expect(result.status).toBe("created");
+    expect(result.status).toBe("idle");
   });
 
   it("client logs convenience method throws on error", async () => {
@@ -315,7 +315,7 @@ describe("vh logs integration", () => {
     const client = new Client(socketFile);
 
     await expect(client.logs("nonexistent")).rejects.toThrow(
-      "agent 'nonexistent' not found",
+      "session 'nonexistent' not found",
     );
   });
 });

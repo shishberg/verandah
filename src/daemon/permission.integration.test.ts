@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { Client } from "../lib/client.js";
-import type { Agent } from "../lib/types.js";
+import type { SessionWithStatus } from "../lib/types.js";
 
 // Mock the SDK module.
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -135,7 +135,7 @@ async function setupBlockedAgent(
   );
 
   // Create and start an agent.
-  const agent = daemon.store.createAgent({ name: "alpha", cwd: "/tmp" });
+  const agent = daemon.store.createSession({ name: "alpha", cwd: "/tmp" });
   const runner = daemon.createRunner("alpha");
   runner.start(agent, "do work");
 
@@ -194,9 +194,10 @@ describe("vh permission integration", () => {
     socketFile = setup.socketFile;
     vhHome = setup.vhHome;
 
-    // Verify agent is blocked.
-    const agent = daemon.store.getAgent("alpha");
-    expect(agent?.status).toBe("blocked");
+    // Verify session is blocked (derived status).
+    const agent = daemon.store.getSession("alpha")!;
+    const session = daemon.sessionWithStatus(agent);
+    expect(session.status).toBe("blocked");
 
     // Show the pending permission.
     const response = await setup.client.send({
@@ -216,7 +217,7 @@ describe("vh permission integration", () => {
     expect(typeof data.remainingMs).toBe("number");
 
     // Clean up: resolve the permission and finish the runner.
-    const runner = daemon.runners.get("alpha")!;
+    const runner = daemon.activeQueries.get("alpha")!;
     runner.resolvePermission({ behavior: "deny", message: "cleanup" });
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
@@ -239,23 +240,23 @@ describe("vh permission integration", () => {
     expect(response.data!.name).toBe("alpha");
     expect(response.data!.status).toBe("running");
 
-    // Agent should be running now.
-    const agent = daemon.store.getAgent("alpha");
-    expect(agent?.status).toBe("running");
+    // Session should be running now (derived from activeQueries).
+    const allowAgent = daemon.store.getSession("alpha")!;
+    expect(daemon.sessionWithStatus(allowAgent).status).toBe("running");
 
-    // Finish the agent.
+    // Finish the session.
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
 
-    const runner = daemon.runners.get("alpha");
+    const runner = daemon.activeQueries.get("alpha");
     await runner?.queryPromise;
 
-    // Agent should be stopped.
-    const final = daemon.store.getAgent("alpha");
-    expect(final?.status).toBe("stopped");
+    // Session should be idle (no runner, no lastError).
+    const final = daemon.store.getSession("alpha")!;
+    expect(daemon.sessionWithStatus(final).status).toBe("idle");
   });
 
-  it("deny resolves with message, agent continues", async () => {
+  it("deny resolves with message, session continues", async () => {
     const setup = await setupBlockedAgent("Bash", { command: "dangerous-cmd" });
     daemon = setup.daemon;
     socketFile = setup.socketFile;
@@ -271,20 +272,20 @@ describe("vh permission integration", () => {
     expect(response.data!.name).toBe("alpha");
     expect(response.data!.status).toBe("running");
 
-    // Agent should be running now.
-    const agent = daemon.store.getAgent("alpha");
-    expect(agent?.status).toBe("running");
+    // Session should be running now (derived from activeQueries).
+    const denyAgent = daemon.store.getSession("alpha")!;
+    expect(daemon.sessionWithStatus(denyAgent).status).toBe("running");
 
-    // Finish the agent.
+    // Finish the session.
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
 
-    const runner = daemon.runners.get("alpha");
-    await runner?.queryPromise;
+    const denyRunner = daemon.activeQueries.get("alpha");
+    await denyRunner?.queryPromise;
 
-    // Agent should be stopped.
-    const final = daemon.store.getAgent("alpha");
-    expect(final?.status).toBe("stopped");
+    // Session should be idle.
+    const denyFinal = daemon.store.getSession("alpha")!;
+    expect(daemon.sessionWithStatus(denyFinal).status).toBe("idle");
   });
 
   it("error if agent not blocked", async () => {
@@ -297,7 +298,7 @@ describe("vh permission integration", () => {
     mockQuery.mockImplementation(() => ctrl.generator);
 
     // Create a running agent (no permission request).
-    const agent = daemon.store.createAgent({ name: "beta", cwd: "/tmp" });
+    const agent = daemon.store.createSession({ name: "beta", cwd: "/tmp" });
     const runner = daemon.createRunner("beta");
     runner.start(agent, "do work");
 
@@ -312,7 +313,7 @@ describe("vh permission integration", () => {
       args: { name: "beta", action: "allow" },
     });
     expect(response.ok).toBe(false);
-    expect(response.error).toContain("not blocked");
+    expect(response.error).toContain("no pending permission request");
 
     // Clean up.
     ctrl.push(resultMessage("sess-beta"));
@@ -333,7 +334,7 @@ describe("vh permission integration", () => {
       args: { name: "nonexistent", action: "show" },
     });
     expect(response.ok).toBe(false);
-    expect(response.error).toContain("agent 'nonexistent' not found");
+    expect(response.error).toContain("session 'nonexistent' not found");
   });
 
   it("answer on non-AskUserQuestion tool returns error", async () => {
@@ -352,7 +353,7 @@ describe("vh permission integration", () => {
     expect(response.error).toContain("not 'AskUserQuestion'");
 
     // Clean up: resolve the permission and finish the runner.
-    const runner = daemon.runners.get("alpha")!;
+    const runner = daemon.activeQueries.get("alpha")!;
     runner.resolvePermission({ behavior: "deny", message: "cleanup" });
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
@@ -387,19 +388,20 @@ describe("vh permission integration", () => {
     expect(response.data!.name).toBe("alpha");
     expect(response.data!.status).toBe("running");
 
-    // Agent should be running now.
-    const agent = daemon.store.getAgent("alpha");
-    expect(agent?.status).toBe("running");
+    // Session should be running now (derived from activeQueries).
+    const answerAgent = daemon.store.getSession("alpha")!;
+    expect(daemon.sessionWithStatus(answerAgent).status).toBe("running");
 
-    // Finish the agent.
+    // Finish the session.
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
 
-    const runner = daemon.runners.get("alpha");
+    const runner = daemon.activeQueries.get("alpha");
     await runner?.queryPromise;
 
-    const final = daemon.store.getAgent("alpha");
-    expect(final?.status).toBe("stopped");
+    // Session should be idle (no runner, no lastError).
+    const final = daemon.store.getSession("alpha")!;
+    expect(daemon.sessionWithStatus(final).status).toBe("idle");
   });
 
   it("allow with --wait blocks until agent reaches terminal status", async () => {
@@ -432,8 +434,8 @@ describe("vh permission integration", () => {
     // Wait should resolve.
     const waitResp = await waitPromise;
     expect(waitResp.ok).toBe(true);
-    expect((waitResp.data as unknown as Agent).name).toBe("alpha");
-    expect((waitResp.data as unknown as Agent).status).toBe("stopped");
+    expect((waitResp.data as unknown as SessionWithStatus).name).toBe("alpha");
+    expect((waitResp.data as unknown as SessionWithStatus).status).toBe("idle");
   });
 
   it("permissionShow convenience method works", async () => {
@@ -447,7 +449,7 @@ describe("vh permission integration", () => {
     expect(data.toolName).toBe("Bash");
 
     // Clean up.
-    const runner = daemon.runners.get("alpha")!;
+    const runner = daemon.activeQueries.get("alpha")!;
     runner.resolvePermission({ behavior: "deny", message: "cleanup" });
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
@@ -467,7 +469,7 @@ describe("vh permission integration", () => {
     // Clean up.
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
-    const runner = daemon.runners.get("alpha");
+    const runner = daemon.activeQueries.get("alpha");
     await runner?.queryPromise;
   });
 
@@ -484,7 +486,7 @@ describe("vh permission integration", () => {
     // Clean up.
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
-    const runner = daemon.runners.get("alpha");
+    const runner = daemon.activeQueries.get("alpha");
     await runner?.queryPromise;
   });
 
@@ -512,7 +514,7 @@ describe("vh permission integration", () => {
     // Clean up.
     setup.ctrl.push(resultMessage("sess-alpha"));
     setup.ctrl.done();
-    const runner = daemon.runners.get("alpha");
+    const runner = daemon.activeQueries.get("alpha");
     await runner?.queryPromise;
   });
 
@@ -526,6 +528,6 @@ describe("vh permission integration", () => {
 
     await expect(
       client.permissionAllow("nonexistent"),
-    ).rejects.toThrow("agent 'nonexistent' not found");
+    ).rejects.toThrow("session 'nonexistent' not found");
   });
 });

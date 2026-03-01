@@ -2,7 +2,8 @@ import * as net from "node:net";
 import * as fs from "node:fs";
 import { Store } from "../lib/store.js";
 import { dbPath } from "../lib/config.js";
-import type { Agent, Request, Response, WaitArgs } from "../lib/types.js";
+import type { Session, Request, Response, WaitArgs, SessionWithStatus } from "../lib/types.js";
+import { sessionStatus } from "../lib/types.js";
 import { AgentRunner } from "./agent-runner.js";
 import { handleNew, handleList, handleSend, handleStop, handleRemove, handleLogs, handleWhoami, handlePermission, handleNotifyStart, handleNotifyExit } from "./handlers.js";
 
@@ -29,11 +30,11 @@ export class Daemon {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private activeConnections = 0;
 
-  /** Active agent runners, keyed by agent name. */
-  readonly runners: Map<string, AgentRunner> = new Map();
+  /** Active query runners, keyed by agent name. */
+  readonly activeQueries: Map<string, AgentRunner> = new Map();
 
   /** Per-agent wait listeners. Each waiter resolves when the agent reaches a terminal status. */
-  readonly waiters: Map<string, Set<(agent: Agent) => void>> = new Map();
+  readonly waiters: Map<string, Set<(session: SessionWithStatus) => void>> = new Map();
 
   constructor(vhHome: string, options?: DaemonOptions) {
     this.vhHome = vhHome;
@@ -43,7 +44,7 @@ export class Daemon {
   }
 
   /**
-   * Create an AgentRunner and register it in the runners map.
+   * Create an AgentRunner and register it in the activeQueries map.
    * When the runner finishes, it is automatically removed.
    */
   createRunner(agentName: string): AgentRunner {
@@ -52,22 +53,35 @@ export class Daemon {
       vhHome: this.vhHome,
       blockTimeoutMs: this.blockTimeoutMs,
       onDone: (name) => {
-        this.runners.delete(name);
+        this.activeQueries.delete(name);
+        this.notifyWaiters(name);
       },
       onStatusChange: (name) => {
         this.notifyWaiters(name);
       },
     });
-    this.runners.set(agentName, runner);
+    this.activeQueries.set(agentName, runner);
     return runner;
   }
 
   /**
+   * Convert an Agent from the store to a SessionWithStatus by deriving status
+   * from the in-memory activeQueries map.
+   */
+  sessionWithStatus(session: Session): SessionWithStatus {
+    const status = sessionStatus(session, this.activeQueries);
+    return {
+      ...session,
+      status,
+    };
+  }
+
+  /**
    * Start listening on the given unix socket path.
-   * Performs startup reconciliation before accepting connections.
+   * No reconciliation needed — empty activeQueries map means all agents
+   * derive as idle/failed.
    */
   async start(socketPath: string): Promise<void> {
-    this.reconcileStaleAgents();
     this.currentSocketPath = socketPath;
 
     return new Promise<void>((resolve, reject) => {
@@ -92,10 +106,10 @@ export class Daemon {
     this.clearIdleTimer();
 
     // Abort all active runners.
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeQueries.values()) {
       runner.stop();
     }
-    this.runners.clear();
+    this.activeQueries.clear();
 
     // Clear all pending waiters.
     this.waiters.clear();
@@ -153,30 +167,6 @@ export class Daemon {
     this.shutdown().then(() => {
       process.exit(0);
     });
-  }
-
-  /**
-   * Mark any agents with status 'running' or 'blocked' as 'stopped'.
-   * Called on startup because no in-flight queries survive a daemon restart.
-   */
-  private reconcileStaleAgents(): void {
-    const now = new Date().toISOString().replace("T", " ").replace("Z", "");
-
-    const running = this.store.listAgents("running");
-    for (const agent of running) {
-      this.store.updateAgent(agent.name, {
-        status: "stopped",
-        stoppedAt: now,
-      });
-    }
-
-    const blocked = this.store.listAgents("blocked");
-    for (const agent of blocked) {
-      this.store.updateAgent(agent.name, {
-        status: "stopped",
-        stoppedAt: now,
-      });
-    }
   }
 
   /**
@@ -254,23 +244,26 @@ export class Daemon {
   /**
    * Notify all waiters registered for a given agent name.
    * Only resolves waiters when the agent is in a terminal status for wait
-   * purposes (stopped, failed, blocked).
-   * Called from the agent runner's onStatusChange callback.
+   * purposes (idle, failed, blocked).
+   * Called from the agent runner's onStatusChange and onDone callbacks.
    */
   notifyWaiters(name: string): void {
-    const agent = this.store.getAgent(name);
-    if (!agent) return;
+    const sess = this.store.getSession(name);
+    if (!sess) return;
+
+    // Derive status from in-memory state.
+    const session = this.sessionWithStatus(sess);
 
     // Only notify on terminal-for-wait statuses.
-    const terminalStatuses = ["stopped", "failed", "blocked"];
-    if (!terminalStatuses.includes(agent.status)) return;
+    const terminalStatuses = ["idle", "failed", "blocked"];
+    if (!terminalStatuses.includes(session.status)) return;
 
     const listeners = this.waiters.get(name);
     if (!listeners || listeners.size === 0) return;
 
     // Call all listeners and remove them.
     for (const listener of listeners) {
-      listener(agent);
+      listener(session);
     }
     listeners.clear();
   }
@@ -283,16 +276,18 @@ export class Daemon {
   private handleWait(args: Record<string, unknown>): Response | Promise<Response> {
     const { name } = args as WaitArgs;
 
-    const agent = this.store.getAgent(name);
-    if (!agent) {
-      return { ok: false, error: `agent '${name}' not found` };
+    const sess = this.store.getSession(name);
+    if (!sess) {
+      return { ok: false, error: `session '${name}' not found` };
     }
 
-    // Terminal statuses for wait: stopped, failed, created.
-    // Also blocked is terminal for wait purposes.
-    const terminalStatuses = ["stopped", "failed", "created", "blocked"];
-    if (terminalStatuses.includes(agent.status)) {
-      return { ok: true, data: agent as unknown as Record<string, unknown> };
+    // Derive status from in-memory state.
+    const session = this.sessionWithStatus(sess);
+
+    // Terminal statuses for wait: idle, failed, blocked.
+    const terminalStatuses = ["idle", "failed", "blocked"];
+    if (terminalStatuses.includes(session.status)) {
+      return { ok: true, data: session as unknown as Record<string, unknown> };
     }
 
     // Agent is running — register a listener and return a promise.
@@ -302,8 +297,8 @@ export class Daemon {
         listeners = new Set();
         this.waiters.set(name, listeners);
       }
-      listeners.add((updatedAgent: Agent) => {
-        resolve({ ok: true, data: updatedAgent as unknown as Record<string, unknown> });
+      listeners.add((updatedSession: SessionWithStatus) => {
+        resolve({ ok: true, data: updatedSession as unknown as Record<string, unknown> });
       });
     });
   }

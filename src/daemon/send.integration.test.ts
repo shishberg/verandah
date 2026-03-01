@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { Client } from "../lib/client.js";
-import type { Agent } from "../lib/types.js";
+import type { SessionWithStatus } from "../lib/types.js";
 
 // Mock the SDK module.
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -159,7 +159,7 @@ describe("vh send integration", () => {
     }
   });
 
-  it("send to created agent starts it", async () => {
+  it("send to idle session starts it", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -172,31 +172,31 @@ describe("vh send integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create agent without prompt.
+    // Create session without prompt.
     await client.send({
       command: "new",
       args: { name: "alpha", cwd: "/tmp" },
     });
 
-    // Send a message to the created agent.
+    // Send a message to the idle session.
     const sendResp = await client.send({
       command: "send",
       args: { name: "alpha", message: "fix the tests" },
     });
     expect(sendResp.ok).toBe(true);
-    const agent = sendResp.data as unknown as Agent;
-    expect(agent.name).toBe("alpha");
-    // Status should be running (agent was just started).
-    expect(agent.status).toBe("running");
+    const session = sendResp.data as unknown as SessionWithStatus;
+    expect(session.name).toBe("alpha");
+    // Status should be running (session was just started).
+    expect(session.status).toBe("running");
 
     // Wait for the runner to finish.
     await new Promise((r) => setTimeout(r, 100));
 
-    // Verify status is stopped.
+    // Verify status is idle.
     const listResp = await client.send({ command: "list", args: {} });
     expect(listResp.ok).toBe(true);
-    const data = listResp.data as unknown as { agents: Agent[] };
-    expect(data.agents[0].status).toBe("stopped");
+    const data = listResp.data as unknown as { agents: SessionWithStatus[] };
+    expect(data.agents[0].status).toBe("idle");
 
     // Verify the prompt was stored.
     expect(data.agents[0].prompt).toBe("fix the tests");
@@ -207,13 +207,13 @@ describe("vh send integration", () => {
     expect(queryCall.prompt).toBe("fix the tests");
   });
 
-  it("send to stopped agent resumes it", async () => {
+  it("send to idle session with sessionId resumes it", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
     await daemon.start(socketFile);
 
-    // Create and start an agent, then let it finish.
+    // Create and start a session, then let it finish.
     mockQuery.mockReturnValueOnce(
       createMockResponse([initMessage("sess-2"), resultMessage("sess-2")]),
     );
@@ -228,10 +228,10 @@ describe("vh send integration", () => {
     // Wait for the runner to finish.
     await new Promise((r) => setTimeout(r, 100));
 
-    // Verify it's stopped and has a sessionId.
+    // Verify it's idle and has a sessionId.
     let listResp = await client.send({ command: "list", args: {} });
-    let agents = (listResp.data as unknown as { agents: Agent[] }).agents;
-    expect(agents[0].status).toBe("stopped");
+    let agents = (listResp.data as unknown as { agents: SessionWithStatus[] }).agents;
+    expect(agents[0].status).toBe("idle");
     expect(agents[0].sessionId).toBe("sess-2");
 
     // Now send a new message — this should resume.
@@ -244,15 +244,15 @@ describe("vh send integration", () => {
       args: { name: "beta", message: "follow up" },
     });
     expect(sendResp.ok).toBe(true);
-    expect((sendResp.data as unknown as Agent).status).toBe("running");
+    expect((sendResp.data as unknown as SessionWithStatus).status).toBe("running");
 
     // Wait for the resumed runner to finish.
     await new Promise((r) => setTimeout(r, 100));
 
-    // Verify stopped again.
+    // Verify idle again.
     listResp = await client.send({ command: "list", args: {} });
-    agents = (listResp.data as unknown as { agents: Agent[] }).agents;
-    expect(agents[0].status).toBe("stopped");
+    agents = (listResp.data as unknown as { agents: SessionWithStatus[] }).agents;
+    expect(agents[0].status).toBe("idle");
 
     // Verify the second call used resume option.
     expect(mockQuery).toHaveBeenCalledTimes(2);
@@ -261,7 +261,7 @@ describe("vh send integration", () => {
     expect(resumeCall.options.resume).toBe("sess-2");
   });
 
-  it("send to running agent fails", async () => {
+  it("send to running session fails", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -272,7 +272,7 @@ describe("vh send integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create and start an agent (it stays running because ctrl hasn't finished).
+    // Create and start a session (it stays running because ctrl hasn't finished).
     await client.send({
       command: "new",
       args: { name: "gamma", cwd: "/tmp", prompt: "do work" },
@@ -281,21 +281,21 @@ describe("vh send integration", () => {
     // Give the runner time to start.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Try to send — should fail because agent is running.
+    // Try to send — should fail because session is running.
     const sendResp = await client.send({
       command: "send",
       args: { name: "gamma", message: "more work" },
     });
     expect(sendResp.ok).toBe(false);
-    expect(sendResp.error).toBe("agent 'gamma' is already running");
+    expect(sendResp.error).toBe("session 'gamma' is already running");
 
     // Clean up.
     ctrl.push(resultMessage("sess-gamma"));
     ctrl.done();
-    await daemon.runners.get("gamma")?.queryPromise;
+    await daemon.activeQueries.get("gamma")?.queryPromise;
   });
 
-  it("send to blocked agent fails with guidance", async () => {
+  it("send to blocked session fails with guidance", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -320,7 +320,7 @@ describe("vh send integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create and start an agent.
+    // Create and start a session.
     await client.send({
       command: "new",
       args: { name: "delta", cwd: "/tmp", prompt: "do work" },
@@ -338,11 +338,11 @@ describe("vh send integration", () => {
     // Give the runner time to process.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Trigger a permission request, which blocks the agent.
+    // Trigger a permission request, which blocks the session.
     expect(capturedCanUseTool).toBeDefined();
     capturedCanUseTool("Bash", { command: "ls" });
 
-    // Give time for status to update to blocked.
+    // Give time for blocked status to be derivable.
     await new Promise((r) => setTimeout(r, 50));
 
     // Try to send — should fail with guidance.
@@ -355,14 +355,14 @@ describe("vh send integration", () => {
     expect(sendResp.error).toContain("vh permission allow delta");
 
     // Clean up: resolve permission and finish.
-    const runner = daemon.runners.get("delta")!;
+    const runner = daemon.activeQueries.get("delta")!;
     runner.resolvePermission({ behavior: "deny", message: "test" });
     ctrl.push(resultMessage("sess-delta"));
     ctrl.done();
     await runner.queryPromise;
   });
 
-  it("send to non-existent agent fails", async () => {
+  it("send to non-existent session fails", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -375,10 +375,10 @@ describe("vh send integration", () => {
       args: { name: "nonexistent", message: "hello" },
     });
     expect(sendResp.ok).toBe(false);
-    expect(sendResp.error).toContain("agent 'nonexistent' not found");
+    expect(sendResp.error).toContain("session 'nonexistent' not found");
   });
 
-  it("send with --wait blocks until stopped", async () => {
+  it("send with --wait blocks until idle", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -389,13 +389,13 @@ describe("vh send integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create agent without prompt.
+    // Create session without prompt.
     await client.send({
       command: "new",
       args: { name: "epsilon", cwd: "/tmp" },
     });
 
-    // Send a message (starts the agent).
+    // Send a message (starts the session).
     const sendResp = await client.send({
       command: "send",
       args: { name: "epsilon", message: "start work" },
@@ -412,24 +412,24 @@ describe("vh send integration", () => {
     // Give time for the wait to register.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Agent finishes.
+    // Session finishes.
     ctrl.push(resultMessage("sess-epsilon"));
     ctrl.done();
 
     // Wait should resolve.
     const waitResp = await waitPromise;
     expect(waitResp.ok).toBe(true);
-    expect((waitResp.data as unknown as Agent).name).toBe("epsilon");
-    expect((waitResp.data as unknown as Agent).status).toBe("stopped");
+    expect((waitResp.data as unknown as SessionWithStatus).name).toBe("epsilon");
+    expect((waitResp.data as unknown as SessionWithStatus).status).toBe("idle");
   });
 
-  it("send to failed agent resumes it", async () => {
+  it("send to failed session resumes it", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
     await daemon.start(socketFile);
 
-    // Create and start an agent, then let it fail.
+    // Create and start a session, then let it fail.
     mockQuery.mockReturnValueOnce(
       createMockResponse([initMessage("sess-fail"), resultMessage("sess-fail", true)]),
     );
@@ -446,7 +446,7 @@ describe("vh send integration", () => {
 
     // Verify it's failed.
     let listResp = await client.send({ command: "list", args: {} });
-    let agents = (listResp.data as unknown as { agents: Agent[] }).agents;
+    let agents = (listResp.data as unknown as { agents: SessionWithStatus[] }).agents;
     expect(agents[0].status).toBe("failed");
 
     // Send a new message to resume.
@@ -459,15 +459,15 @@ describe("vh send integration", () => {
       args: { name: "zeta", message: "try again" },
     });
     expect(sendResp.ok).toBe(true);
-    expect((sendResp.data as unknown as Agent).status).toBe("running");
+    expect((sendResp.data as unknown as SessionWithStatus).status).toBe("running");
 
     // Wait for the resumed runner to finish.
     await new Promise((r) => setTimeout(r, 100));
 
-    // Verify stopped.
+    // Verify idle.
     listResp = await client.send({ command: "list", args: {} });
-    agents = (listResp.data as unknown as { agents: Agent[] }).agents;
-    expect(agents[0].status).toBe("stopped");
+    agents = (listResp.data as unknown as { agents: SessionWithStatus[] }).agents;
+    expect(agents[0].status).toBe("idle");
   });
 
   it("sendMessage convenience method works", async () => {
@@ -483,7 +483,7 @@ describe("vh send integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create agent without prompt.
+    // Create session without prompt.
     await client.newAgent({ name: "conv-test", cwd: "/tmp" });
 
     // Use convenience method.
@@ -500,9 +500,9 @@ describe("vh send integration", () => {
 
     const client = new Client(socketFile);
 
-    // Try to send to non-existent agent.
+    // Try to send to non-existent session.
     await expect(
       client.sendMessage("nonexistent", "hello"),
-    ).rejects.toThrow("agent 'nonexistent' not found");
+    ).rejects.toThrow("session 'nonexistent' not found");
   });
 });

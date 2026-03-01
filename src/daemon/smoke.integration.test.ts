@@ -163,14 +163,14 @@ describe("end-to-end smoke test", () => {
     // Wait for the runner to finish since the mock completes immediately.
     await waitUntil(async () => {
       const agents = await client.list();
-      return agents.length === 1 && agents[0].status === "stopped";
+      return agents.length === 1 && agents[0].status === "idle";
     });
 
     // --- Step 3: Verify alpha is stopped ---
     const afterFirstRun = await client.list();
     expect(afterFirstRun).toHaveLength(1);
     expect(afterFirstRun[0].name).toBe("alpha");
-    expect(afterFirstRun[0].status).toBe("stopped");
+    expect(afterFirstRun[0].status).toBe("idle");
     expect(afterFirstRun[0].sessionId).toBe(SESSION_ID);
 
     // --- Step 4: vh send alpha "follow up" — agent resumes ---
@@ -195,17 +195,17 @@ describe("end-to-end smoke test", () => {
     // --- Step 5: Wait for mock to finish, verify stopped ---
     await waitUntil(async () => {
       const agents = await client.list();
-      return agents[0].status === "stopped";
+      return agents[0].status === "idle";
     });
 
     const afterResume = await client.list();
     expect(afterResume).toHaveLength(1);
-    expect(afterResume[0].status).toBe("stopped");
+    expect(afterResume[0].status).toBe("idle");
 
     // --- Step 6: vh logs alpha --no-follow shows output ---
     const logsResult = await client.logs("alpha");
     expect(logsResult.path).toBeTruthy();
-    expect(logsResult.status).toBe("stopped");
+    expect(logsResult.status).toBe("idle");
 
     // Verify the log file exists and has content.
     const logFile = logPath("alpha", vhHome);
@@ -230,7 +230,7 @@ describe("end-to-end smoke test", () => {
     // --- Step 7: vh wait alpha on already-stopped agent returns immediately ---
     const waitResult = await client.wait("alpha");
     expect(waitResult.name).toBe("alpha");
-    expect(waitResult.status).toBe("stopped");
+    expect(waitResult.status).toBe("idle");
 
     // --- Step 8: vh stop --all ---
     // Alpha is already stopped (no active runner), so stopAll returns empty.

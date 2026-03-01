@@ -89,42 +89,27 @@ describe("Daemon integration", () => {
     expect(response.error).toContain("unknown command");
   });
 
-  it("should reconcile stale running agents on startup", async () => {
+  it("should derive all sessions as idle/failed on startup (no reconciliation needed)", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
 
-    // Pre-populate the database with agents in running/blocked status.
+    // Pre-populate the database with agents that had various stored statuses.
+    // With derived status, on fresh startup (empty activeQueries), all should
+    // derive as idle or failed based on lastError.
     const store = new Store(dbPath(vhHome));
-    store.createAgent({ name: "agent-running", cwd: "/tmp" });
-    store.updateAgent("agent-running", { status: "running" });
+    store.createSession({ name: "session-a", cwd: "/tmp" });
 
-    store.createAgent({ name: "agent-blocked", cwd: "/tmp" });
-    store.updateAgent("agent-blocked", { status: "blocked" });
-
-    store.createAgent({ name: "agent-stopped", cwd: "/tmp" });
-    store.updateAgent("agent-stopped", { status: "stopped" });
+    store.createSession({ name: "session-b", cwd: "/tmp" });
+    store.updateSession("session-b", { lastError: "some_error" });
 
     store.close();
 
-    // Start the daemon — it should reconcile stale agents.
+    // Start the daemon — no reconciliation, status is derived.
     daemon = new Daemon(vhHome);
     await daemon.start(socketFile);
 
-    // Verify reconciliation via the daemon's store.
-    const running = daemon.store.getAgent("agent-running");
-    expect(running).not.toBeNull();
-    expect(running!.status).toBe("stopped");
-    expect(running!.stoppedAt).not.toBeNull();
-
-    const blocked = daemon.store.getAgent("agent-blocked");
-    expect(blocked).not.toBeNull();
-    expect(blocked!.status).toBe("stopped");
-    expect(blocked!.stoppedAt).not.toBeNull();
-
-    // Agent that was already stopped should remain unchanged.
-    const stopped = daemon.store.getAgent("agent-stopped");
-    expect(stopped).not.toBeNull();
-    expect(stopped!.status).toBe("stopped");
+    // activeQueries is empty, so all sessions derive as idle or failed.
+    expect(daemon.activeQueries.size).toBe(0);
   });
 
   it("should handle multiple concurrent client connections", async () => {

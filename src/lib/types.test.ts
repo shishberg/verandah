@@ -15,7 +15,13 @@ import type {
   PendingPermission,
   PermissionResult,
   CommandName,
+  Session,
+  SessionStatus,
+  SessionWithStatus,
+  CreateSessionArgs,
+  UpdateSessionFields,
 } from "./types.js";
+import { sessionStatus } from "./types.js";
 
 describe("types", () => {
   describe("AgentStatus", () => {
@@ -258,6 +264,115 @@ describe("types", () => {
         behavior: "deny",
         message: "not allowed",
       });
+    });
+  });
+
+  describe("Session types", () => {
+    it("can construct a Session record", () => {
+      const session: Session = {
+        id: "01JXXXXXXXXXXXXXXXXXXXXXXX",
+        name: "alpha",
+        sessionId: "session-123",
+        model: "claude-opus-4-6",
+        cwd: "/home/user/project",
+        prompt: "fix the tests",
+        permissionMode: "default",
+        maxTurns: 10,
+        allowedTools: "Bash(git:*) Edit Read",
+        lastError: null,
+        createdAt: "2026-03-01T10:00:00Z",
+      };
+      expect(session.name).toBe("alpha");
+      // Session has no status or stoppedAt fields
+      expect("status" in session).toBe(false);
+      expect("stoppedAt" in session).toBe(false);
+    });
+
+    it("SessionWithStatus includes derived status", () => {
+      const session: SessionWithStatus = {
+        id: "01JXXXXXXXXXXXXXXXXXXXXXXX",
+        name: "alpha",
+        sessionId: null,
+        model: null,
+        cwd: "/tmp",
+        prompt: null,
+        permissionMode: null,
+        maxTurns: null,
+        allowedTools: null,
+        lastError: null,
+        createdAt: "2026-03-01T10:00:00Z",
+        status: "idle",
+      };
+      expect(session.status).toBe("idle");
+    });
+
+    it("CreateSessionArgs matches CreateAgentArgs shape", () => {
+      const args: CreateSessionArgs = {
+        name: "alpha",
+        cwd: "/tmp",
+        prompt: "hello",
+        model: "haiku",
+        permissionMode: "default",
+        maxTurns: 5,
+        allowedTools: "Bash Edit",
+      };
+      expect(args.name).toBe("alpha");
+    });
+
+    it("UpdateSessionFields omits status and stoppedAt", () => {
+      const fields: UpdateSessionFields = {
+        sessionId: "session-456",
+        model: "haiku",
+        prompt: "new prompt",
+        permissionMode: "plan",
+        maxTurns: 20,
+        allowedTools: "Read",
+        lastError: null,
+      };
+      expect(fields.sessionId).toBe("session-456");
+    });
+  });
+
+  describe("sessionStatus()", () => {
+    it("returns idle when no active query and no lastError", () => {
+      const session = { name: "alpha", lastError: null };
+      const activeQueries = new Map<
+        string,
+        { pendingPermission: unknown | null }
+      >();
+      const result: SessionStatus = sessionStatus(session, activeQueries);
+      expect(result).toBe("idle");
+    });
+
+    it("returns failed when no active query and lastError is set", () => {
+      const session = { name: "alpha", lastError: "something broke" };
+      const activeQueries = new Map<
+        string,
+        { pendingPermission: unknown | null }
+      >();
+      expect(sessionStatus(session, activeQueries)).toBe("failed");
+    });
+
+    it("returns running when active query with no pendingPermission", () => {
+      const session = { name: "alpha", lastError: null };
+      const activeQueries = new Map<
+        string,
+        { pendingPermission: unknown | null }
+      >();
+      activeQueries.set("alpha", { pendingPermission: null });
+      expect(sessionStatus(session, activeQueries)).toBe("running");
+    });
+
+    it("returns blocked when active query with pendingPermission set", () => {
+      const session = { name: "alpha", lastError: null };
+      const activeQueries = new Map<
+        string,
+        { pendingPermission: unknown | null }
+      >();
+      activeQueries.set("alpha", {
+        pendingPermission: { toolName: "Bash", toolInput: {} },
+      });
+      expect(sessionStatus(session, activeQueries)).toBe("blocked");
     });
   });
 });

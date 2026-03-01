@@ -236,13 +236,13 @@ describe("permission approval smoke test", () => {
     // Wait until the agent finishes.
     await waitUntil(async () => {
       const list = await client.list();
-      return list[0].status === "stopped";
+      return list[0].status === "idle";
     });
 
     // Verify final status is stopped.
     const finalList = await client.list();
     expect(finalList[0].name).toBe("alpha");
-    expect(finalList[0].status).toBe("stopped");
+    expect(finalList[0].status).toBe("idle");
     expect(finalList[0].sessionId).toBe(SESSION_ID);
   });
 
@@ -286,13 +286,13 @@ describe("permission approval smoke test", () => {
     // Wait until the agent finishes.
     await waitUntil(async () => {
       const list = await client.list();
-      return list[0].status === "stopped";
+      return list[0].status === "idle";
     });
 
     // Verify final status is stopped.
     const finalList = await client.list();
     expect(finalList[0].name).toBe("beta");
-    expect(finalList[0].status).toBe("stopped");
+    expect(finalList[0].status).toBe("idle");
   });
 
   it("approval loop: double-block, approve both, agent finishes", async () => {
@@ -354,12 +354,12 @@ describe("permission approval smoke test", () => {
     // Agent should finish.
     await waitUntil(async () => {
       const list = await client.list();
-      return list[0].status === "stopped";
+      return list[0].status === "idle";
     });
 
     const finalList = await client.list();
     expect(finalList[0].name).toBe("gamma");
-    expect(finalList[0].status).toBe("stopped");
+    expect(finalList[0].status).toBe("idle");
   });
 
   it("allow with wait: approve and wait in parallel, resolves when stopped", async () => {
@@ -400,11 +400,11 @@ describe("permission approval smoke test", () => {
 
     // Wait should resolve with stopped status.
     expect(waitResult.name).toBe("delta");
-    expect(waitResult.status).toBe("stopped");
+    expect(waitResult.status).toBe("idle");
 
     // Verify final state.
     const finalList = await client.list();
     expect(finalList[0].name).toBe("delta");
-    expect(finalList[0].status).toBe("stopped");
+    expect(finalList[0].status).toBe("idle");
   });
 });

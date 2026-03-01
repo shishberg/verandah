@@ -16,7 +16,7 @@ Every task must leave the codebase in a stable state with passing tests.
 
 ## Phase 0: Foundation
 
-### [ ] 1. New types and sessionStatus() derivation function
+### [x] 1. New types and sessionStatus() derivation function
 
 Add new types alongside existing ones and implement the status derivation function. Purely additive — no existing code changes.
 
@@ -53,7 +53,7 @@ Add new types alongside existing ones and implement the status derivation functi
 
 ## Phase 1: Derive status
 
-### [ ] 2. Daemon and agent-runner: derive status from runner map
+### [x] 2. Daemon and agent-runner: derive status from runner map
 
 Change all server-side code to derive status from the in-memory runner map instead of reading/writing it in SQLite. The store schema and method names are unchanged — the `status` and `stopped_at` columns become vestigial but still exist. Old types (`Agent`, `AgentStatus`) still used for store interaction.
 
@@ -105,7 +105,7 @@ Change all server-side code to derive status from the in-memory runner map inste
 
 ## Phase 2: Schema migration and store renames
 
-### [ ] 3. Store schema migration v2 → v3
+### [x] 3. Store schema migration v2 → v3
 
 Migrate the database: rename `agents` → `sessions`, drop `status`/`stopped_at`. Safe because task 2 already removed all reads/writes of those columns.
 

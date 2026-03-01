@@ -60,7 +60,7 @@ describe("vh whoami integration", () => {
     // Query whoami.
     const agent = await client.whoami("alpha");
     expect(agent.name).toBe("alpha");
-    expect(agent.status).toBe("created");
+    expect(agent.status).toBe("idle");
     expect(agent.model).toBe("haiku");
     expect(agent.cwd).toBe("/tmp");
   });
@@ -74,7 +74,7 @@ describe("vh whoami integration", () => {
     const client = new Client(socketFile);
 
     await expect(client.whoami("nonexistent")).rejects.toThrow(
-      "agent 'nonexistent' not found",
+      "session 'nonexistent' not found",
     );
   });
 
@@ -101,7 +101,7 @@ describe("vh whoami integration", () => {
     expect(resp.data).toBeDefined();
     const data = resp.data as unknown as { name: string; status: string; cwd: string };
     expect(data.name).toBe("beta");
-    expect(data.status).toBe("created");
+    expect(data.status).toBe("idle");
     expect(data.cwd).toBe("/home");
   });
 });

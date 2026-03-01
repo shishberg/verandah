@@ -12,7 +12,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { Store } from "../lib/store.js";
 import { AgentRunner } from "./agent-runner.js";
-import type { Agent } from "../lib/types.js";
+import type { Session } from "../lib/types.js";
 
 // Mock the SDK module.
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -101,10 +101,10 @@ function createControllableResponse(): {
   };
 }
 
-/** Helper: create a test agent in the store. */
-function createTestAgent(store: Store, overrides?: Partial<Agent>): Agent {
+/** Helper: create a test session in the store. */
+function createTestSession(store: Store, overrides?: Partial<Session>): Session {
   const name = overrides?.name ?? "test-agent";
-  return store.createAgent({
+  return store.createSession({
     name,
     cwd: overrides?.cwd ?? "/tmp",
     prompt: overrides?.prompt ?? "test prompt",
@@ -159,11 +159,11 @@ describe("AgentRunner", () => {
     it("clears lastError on start", async () => {
       mockQuery.mockReturnValueOnce(createMockResponse([]));
 
-      createTestAgent(store, { name: "clear-err-agent" });
-      store.updateAgent("clear-err-agent", { lastError: "error_max_turns" });
-      expect(store.getAgent("clear-err-agent")!.lastError).toBe("error_max_turns");
+      createTestSession(store, { name: "clear-err-agent" });
+      store.updateSession("clear-err-agent", { lastError: "error_max_turns" });
+      expect(store.getSession("clear-err-agent")!.lastError).toBe("error_max_turns");
 
-      const agent = store.getAgent("clear-err-agent")!;
+      const agent = store.getSession("clear-err-agent")!;
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -172,12 +172,32 @@ describe("AgentRunner", () => {
 
       runner.start(agent, "hello");
       // After start() is called, lastError should be cleared immediately.
-      expect(store.getAgent("clear-err-agent")!.lastError).toBeNull();
+      expect(store.getSession("clear-err-agent")!.lastError).toBeNull();
 
       await waitForRunner(runner);
     });
 
-    it("messages flow, session ID extracted, status transitions to stopped", async () => {
+    it("session shape has no status or stoppedAt after start", async () => {
+      mockQuery.mockReturnValueOnce(createMockResponse([]));
+
+      const agent = createTestSession(store, { name: "no-status-write" });
+
+      const runner = new AgentRunner({
+        store,
+        vhHome,
+        blockTimeoutMs: 600000,
+      });
+
+      runner.start(agent, "hello");
+      await waitForRunner(runner);
+
+      // Session shape should not have status or stoppedAt — those are gone.
+      const final = store.getSession("no-status-write")!;
+      expect(final).not.toHaveProperty("status");
+      expect(final).not.toHaveProperty("stoppedAt");
+    });
+
+    it("messages flow, session ID extracted, lastError stays null on success", async () => {
       const initMessage = {
         type: "system",
         subtype: "init",
@@ -216,7 +236,7 @@ describe("AgentRunner", () => {
         createMockResponse([initMessage, resultMessage]),
       );
 
-      const agent = createTestAgent(store);
+      const agent = createTestSession(store);
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -225,23 +245,20 @@ describe("AgentRunner", () => {
 
       runner.start(agent, "hello");
 
-      // Status should be running immediately after start.
-      expect(store.getAgent("test-agent")!.status).toBe("running");
-
       await waitForRunner(runner);
 
       // Session ID should be extracted.
-      const updated = store.getAgent("test-agent")!;
+      const updated = store.getSession("test-agent")!;
       expect(updated.sessionId).toBe("sess-abc-123");
-      expect(updated.status).toBe("stopped");
-      expect(updated.stoppedAt).toBeTruthy();
       expect(updated.lastError).toBeNull();
+      // Session shape should not have stoppedAt.
+      expect(updated).not.toHaveProperty("stoppedAt");
     });
 
     it("calls query with correct options", async () => {
       mockQuery.mockReturnValueOnce(createMockResponse([]));
 
-      const agent = createTestAgent(store, {
+      const agent = createTestSession(store, {
         name: "opt-agent",
         cwd: "/workspace",
         model: "haiku",
@@ -277,7 +294,7 @@ describe("AgentRunner", () => {
   });
 
   describe("error handling", () => {
-    it("status transitions to failed when result has is_error=true", async () => {
+    it("sets lastError when result has is_error=true, does not write status/stoppedAt", async () => {
       const resultMessage = {
         type: "result",
         subtype: "error_during_execution",
@@ -297,7 +314,7 @@ describe("AgentRunner", () => {
 
       mockQuery.mockReturnValueOnce(createMockResponse([resultMessage]));
 
-      const agent = createTestAgent(store, { name: "err-agent" });
+      const agent = createTestSession(store, { name: "err-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -307,10 +324,10 @@ describe("AgentRunner", () => {
       runner.start(agent, "fail please");
       await waitForRunner(runner);
 
-      const updated = store.getAgent("err-agent")!;
-      expect(updated.status).toBe("failed");
-      expect(updated.stoppedAt).toBeTruthy();
+      const updated = store.getSession("err-agent")!;
       expect(updated.lastError).toBe("error_during_execution");
+      // Session shape should not have stoppedAt.
+      expect(updated).not.toHaveProperty("stoppedAt");
     });
 
     it("stores lastError subtype on error result", async () => {
@@ -333,7 +350,7 @@ describe("AgentRunner", () => {
 
       mockQuery.mockReturnValueOnce(createMockResponse([resultMessage]));
 
-      const agent = createTestAgent(store, { name: "max-turns-agent" });
+      const agent = createTestSession(store, { name: "max-turns-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -343,16 +360,16 @@ describe("AgentRunner", () => {
       runner.start(agent, "go");
       await waitForRunner(runner);
 
-      const updated = store.getAgent("max-turns-agent")!;
+      const updated = store.getSession("max-turns-agent")!;
       expect(updated.lastError).toBe("error_max_turns");
     });
 
-    it("status transitions to stopped when generator throws", async () => {
+    it("does not write status/stoppedAt when generator throws", async () => {
       mockQuery.mockReturnValueOnce(
         createErrorResponse([], new Error("network error")),
       );
 
-      const agent = createTestAgent(store, { name: "throw-agent" });
+      const agent = createTestSession(store, { name: "throw-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -362,17 +379,18 @@ describe("AgentRunner", () => {
       runner.start(agent, "go");
       await waitForRunner(runner);
 
-      const updated = store.getAgent("throw-agent")!;
-      expect(updated.status).toBe("stopped");
+      const updated = store.getSession("throw-agent")!;
+      // Session shape should not have stoppedAt.
+      expect(updated).not.toHaveProperty("stoppedAt");
     });
   });
 
   describe("abort", () => {
-    it("calling stop() aborts the query and status transitions to stopped", async () => {
+    it("calling stop() aborts the query", async () => {
       const ctrl = createControllableResponse();
       mockQuery.mockReturnValueOnce(ctrl.generator);
 
-      const agent = createTestAgent(store, { name: "abort-agent" });
+      const agent = createTestSession(store, { name: "abort-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -401,13 +419,14 @@ describe("AgentRunner", () => {
 
       await waitForRunner(runner);
 
-      const updated = store.getAgent("abort-agent")!;
-      expect(updated.status).toBe("stopped");
+      const updated = store.getSession("abort-agent")!;
+      // Session shape should not have stoppedAt.
+      expect(updated).not.toHaveProperty("stoppedAt");
     });
   });
 
   describe("canUseTool / permissions", () => {
-    it("status transitions to blocked when canUseTool fires, then back to running when resolved", async () => {
+    it("pendingPermission is set when canUseTool fires, cleared when resolved", async () => {
       const ctrl = createControllableResponse();
 
       mockQuery.mockImplementation(
@@ -426,7 +445,7 @@ describe("AgentRunner", () => {
         },
       );
 
-      const agent = createTestAgent(store, { name: "perm-agent" });
+      const agent = createTestSession(store, { name: "perm-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -450,15 +469,15 @@ describe("AgentRunner", () => {
       expect(capturedCanUseTool).toBeDefined();
       const permPromise = capturedCanUseTool("Bash", { command: "rm -rf /" });
 
-      // Status should be blocked.
+      // PendingPermission should be set on the runner.
       await new Promise((r) => setTimeout(r, 10));
-      expect(store.getAgent("perm-agent")!.status).toBe("blocked");
-
-      // Verify the pending permission.
       expect(runner.pendingPermission).not.toBeNull();
       expect(runner.pendingPermission!.toolName).toBe("Bash");
       expect(runner.pendingPermission!.toolInput).toEqual({ command: "rm -rf /" });
       expect(runner.pendingPermission!.id).toBeTruthy();
+
+      // No status write to store (status derives from runner map).
+      // The DB status column is vestigial.
 
       // Resolve the permission.
       runner.resolvePermission({ behavior: "allow" });
@@ -466,8 +485,7 @@ describe("AgentRunner", () => {
       const result = await permPromise;
       expect(result).toEqual({ behavior: "allow" });
 
-      // Status should be back to running.
-      expect(store.getAgent("perm-agent")!.status).toBe("running");
+      // pendingPermission should be cleared.
       expect(runner.pendingPermission).toBeNull();
 
       // Clean up: finish the generator.
@@ -494,7 +512,7 @@ describe("AgentRunner", () => {
         },
       );
 
-      const agent = createTestAgent(store, { name: "deny-agent" });
+      const agent = createTestSession(store, { name: "deny-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -546,7 +564,7 @@ describe("AgentRunner", () => {
         },
       );
 
-      const agent = createTestAgent(store, { name: "timeout-agent" });
+      const agent = createTestSession(store, { name: "timeout-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -569,7 +587,8 @@ describe("AgentRunner", () => {
 
       // Let the blocked status update happen.
       await vi.advanceTimersByTimeAsync(10);
-      expect(store.getAgent("timeout-agent")!.status).toBe("blocked");
+      // pendingPermission should be set.
+      expect(runner.pendingPermission).not.toBeNull();
 
       // Advance past the block timeout.
       await vi.advanceTimersByTimeAsync(5000);
@@ -580,8 +599,8 @@ describe("AgentRunner", () => {
         message: "permission request timed out after 0m",
       });
 
-      // Status should be back to running after timeout auto-deny.
-      expect(store.getAgent("timeout-agent")!.status).toBe("running");
+      // pendingPermission should be cleared after timeout.
+      expect(runner.pendingPermission).toBeNull();
 
       ctrl.done();
       await waitForRunner(runner);
@@ -594,9 +613,9 @@ describe("AgentRunner", () => {
     it("calls query with resume option", async () => {
       mockQuery.mockReturnValueOnce(createMockResponse([]));
 
-      createTestAgent(store, { name: "resume-agent" });
-      store.updateAgent("resume-agent", { sessionId: "sess-existing" });
-      const updatedAgent = store.getAgent("resume-agent")!;
+      createTestSession(store, { name: "resume-agent" });
+      store.updateSession("resume-agent", { sessionId: "sess-existing" });
+      const updatedAgent = store.getSession("resume-agent")!;
 
       const runner = new AgentRunner({
         store,
@@ -616,12 +635,12 @@ describe("AgentRunner", () => {
     it("clears lastError on resume", async () => {
       mockQuery.mockReturnValueOnce(createMockResponse([]));
 
-      createTestAgent(store, { name: "resume-err-agent" });
-      store.updateAgent("resume-err-agent", {
+      createTestSession(store, { name: "resume-err-agent" });
+      store.updateSession("resume-err-agent", {
         sessionId: "sess-existing",
         lastError: "error_max_turns",
       });
-      const updatedAgent = store.getAgent("resume-err-agent")!;
+      const updatedAgent = store.getSession("resume-err-agent")!;
       expect(updatedAgent.lastError).toBe("error_max_turns");
 
       const runner = new AgentRunner({
@@ -632,7 +651,7 @@ describe("AgentRunner", () => {
 
       runner.resume(updatedAgent, "try again");
       // After resume() is called, lastError should be cleared immediately.
-      expect(store.getAgent("resume-err-agent")!.lastError).toBeNull();
+      expect(store.getSession("resume-err-agent")!.lastError).toBeNull();
 
       await waitForRunner(runner);
     });
@@ -685,7 +704,7 @@ describe("AgentRunner", () => {
 
       mockQuery.mockReturnValueOnce(createMockResponse(messages));
 
-      const agent = createTestAgent(store, { name: "log-agent" });
+      const agent = createTestSession(store, { name: "log-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -735,7 +754,7 @@ describe("AgentRunner", () => {
 
       // Use a nested vhHome to ensure directory creation.
       const nestedHome = path.join(tmpDir, "nested", "vh");
-      const agent = createTestAgent(store, { name: "dir-agent" });
+      const agent = createTestSession(store, { name: "dir-agent" });
       const runner = new AgentRunner({
         store,
         vhHome: nestedHome,
@@ -754,7 +773,7 @@ describe("AgentRunner", () => {
     it("calls onDone when query finishes", async () => {
       mockQuery.mockReturnValueOnce(createMockResponse([]));
 
-      const agent = createTestAgent(store, { name: "done-agent" });
+      const agent = createTestSession(store, { name: "done-agent" });
       const onDone = vi.fn();
 
       const runner = new AgentRunner({
@@ -775,7 +794,7 @@ describe("AgentRunner", () => {
         createErrorResponse([], new Error("boom")),
       );
 
-      const agent = createTestAgent(store, { name: "done-err-agent" });
+      const agent = createTestSession(store, { name: "done-err-agent" });
       const onDone = vi.fn();
 
       const runner = new AgentRunner({
@@ -789,6 +808,65 @@ describe("AgentRunner", () => {
       await waitForRunner(runner);
 
       expect(onDone).toHaveBeenCalledWith("done-err-agent");
+    });
+  });
+
+  describe("onStatusChange callback", () => {
+    it("fires onStatusChange on start", async () => {
+      mockQuery.mockReturnValueOnce(createMockResponse([]));
+
+      const agent = createTestSession(store, { name: "sc-start-agent" });
+      const onStatusChange = vi.fn();
+
+      const runner = new AgentRunner({
+        store,
+        vhHome,
+        blockTimeoutMs: 600000,
+        onStatusChange,
+      });
+
+      runner.start(agent, "go");
+      // onStatusChange should be called synchronously on start.
+      expect(onStatusChange).toHaveBeenCalledWith("sc-start-agent");
+
+      await waitForRunner(runner);
+    });
+
+    it("fires onStatusChange on result message", async () => {
+      const resultMessage = {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+        duration_ms: 100,
+        duration_api_ms: 50,
+        num_turns: 1,
+        stop_reason: "end_turn",
+        total_cost_usd: 0.001,
+        usage: { input_tokens: 10, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        modelUsage: {},
+        permission_denials: [],
+        uuid: "00000000-0000-0000-0000-000000000001",
+        session_id: "sess-sc",
+      };
+
+      mockQuery.mockReturnValueOnce(createMockResponse([resultMessage]));
+
+      const agent = createTestSession(store, { name: "sc-result-agent" });
+      const onStatusChange = vi.fn();
+
+      const runner = new AgentRunner({
+        store,
+        vhHome,
+        blockTimeoutMs: 600000,
+        onStatusChange,
+      });
+
+      runner.start(agent, "go");
+      await waitForRunner(runner);
+
+      // Should have been called at least twice: once on start, once on result.
+      expect(onStatusChange.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -812,7 +890,7 @@ describe("AgentRunner", () => {
         },
       );
 
-      const agent = createTestAgent(store, { name: "stop-blocked-agent" });
+      const agent = createTestSession(store, { name: "stop-blocked-agent" });
       const runner = new AgentRunner({
         store,
         vhHome,
@@ -833,7 +911,7 @@ describe("AgentRunner", () => {
       const permPromise = capturedCanUseTool("Bash", { command: "ls" });
       await new Promise((r) => setTimeout(r, 10));
 
-      expect(store.getAgent("stop-blocked-agent")!.status).toBe("blocked");
+      expect(runner.pendingPermission).not.toBeNull();
 
       // Stop while blocked — should auto-deny.
       runner.stop();
@@ -845,7 +923,8 @@ describe("AgentRunner", () => {
       ctrl.error(new Error("aborted"));
       await waitForRunner(runner);
 
-      expect(store.getAgent("stop-blocked-agent")!.status).toBe("stopped");
+      // Session shape should not have stoppedAt.
+      expect(store.getSession("stop-blocked-agent")!).not.toHaveProperty("stoppedAt");
     });
   });
 });

@@ -8,7 +8,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { ulid } from "ulid";
 import type { Store } from "../lib/store.js";
-import type { Agent, PendingPermission, PermissionResult } from "../lib/types.js";
+import type { Session, PendingPermission, PermissionResult } from "../lib/types.js";
 import { fileURLToPath } from "node:url";
 import { logPath, logDir } from "../lib/config.js";
 
@@ -63,11 +63,11 @@ export class AgentRunner {
   /**
    * Start a new agent query. Does not await — stores the background promise.
    */
-  start(agent: Agent, prompt: string): void {
+  start(agent: Session, prompt: string): void {
     this.agentName = agent.name;
     this.abortController = new AbortController();
 
-    this.store.updateAgent(agent.name, { status: "running", lastError: null });
+    this.store.updateSession(agent.name, { lastError: null });
     this.onStatusChange?.(agent.name);
 
     let response: Query;
@@ -94,7 +94,7 @@ export class AgentRunner {
       });
     } catch (err) {
       process.stderr.write(`agent-runner [${agent.name}]: query() failed: ${err instanceof Error ? err.message : String(err)}\n`);
-      this.store.updateAgent(agent.name, { status: "failed", stoppedAt: new Date().toISOString() });
+      this.store.updateSession(agent.name, { lastError: "query_failed" });
       this.onStatusChange?.(agent.name);
       this.onDone?.(agent.name);
       return;
@@ -106,11 +106,11 @@ export class AgentRunner {
   /**
    * Resume an existing agent session with a new message.
    */
-  resume(agent: Agent, message: string): void {
+  resume(agent: Session, message: string): void {
     this.agentName = agent.name;
     this.abortController = new AbortController();
 
-    this.store.updateAgent(agent.name, { status: "running", lastError: null });
+    this.store.updateSession(agent.name, { lastError: null });
     this.onStatusChange?.(agent.name);
 
     let response: Query;
@@ -138,7 +138,7 @@ export class AgentRunner {
       });
     } catch (err) {
       process.stderr.write(`agent-runner [${agent.name}]: query() failed: ${err instanceof Error ? err.message : String(err)}\n`);
-      this.store.updateAgent(agent.name, { status: "failed", stoppedAt: new Date().toISOString() });
+      this.store.updateSession(agent.name, { lastError: "query_failed" });
       this.onStatusChange?.(agent.name);
       this.onDone?.(agent.name);
       return;
@@ -176,9 +176,8 @@ export class AgentRunner {
     const pp = this.pendingPermission;
     this.pendingPermission = null;
 
-    // Update status back to running (unless the query is about to end).
+    // Notify status change (status derived from runner map — no longer "blocked").
     if (this.agentName) {
-      this.store.updateAgent(this.agentName, { status: "running" });
       this.onStatusChange?.(this.agentName);
     }
 
@@ -196,50 +195,30 @@ export class AgentRunner {
         this.appendToLog(agentName, message);
 
         if (message.type === "system" && message.subtype === "init") {
-          this.store.updateAgent(agentName, {
+          this.store.updateSession(agentName, {
             sessionId: message.session_id,
           });
         }
 
         if (message.type === "result") {
-          const status = message.is_error ? "failed" : "stopped";
-          const lastError = message.is_error
-            ? ((message as Record<string, unknown>).subtype as string) ?? null
-            : null;
-          this.store.updateAgent(agentName, {
-            status,
-            lastError,
-            stoppedAt: new Date().toISOString(),
-          });
+          if (message.is_error) {
+            const lastError = ((message as Record<string, unknown>).subtype as string) ?? null;
+            this.store.updateSession(agentName, { lastError });
+          }
+          // No store update needed for success — lastError was cleared on start.
           this.onStatusChange?.(agentName);
         }
       }
 
-      // If the generator finishes without a result message (e.g. abort),
-      // make sure the agent is marked as stopped.
-      const agent = this.store.getAgent(agentName);
-      if (agent && (agent.status === "running" || agent.status === "blocked")) {
-        this.store.updateAgent(agentName, {
-          status: "stopped",
-          stoppedAt: new Date().toISOString(),
-        });
-        this.onStatusChange?.(agentName);
-      }
+      // Generator finished — status derives as idle/failed from runner map
+      // once onDone fires in the finally block.
     } catch (err) {
       // Log the error for debugging.
       const errMsg = err instanceof Error ? err.stack ?? err.message : String(err);
       if (!(err instanceof Error && err.name === "AbortError")) {
         process.stderr.write(`agent-runner [${agentName}]: ${errMsg}\n`);
       }
-      // On error (including AbortError), mark as stopped.
-      const agent = this.store.getAgent(agentName);
-      if (agent && agent.status !== "stopped" && agent.status !== "failed") {
-        this.store.updateAgent(agentName, {
-          status: "stopped",
-          stoppedAt: new Date().toISOString(),
-        });
-        this.onStatusChange?.(agentName);
-      }
+      // Status derives as idle/failed once onDone removes the runner from the map.
     } finally {
       this.clearBlockTimer();
       this.onDone?.(agentName);
@@ -265,7 +244,7 @@ export class AgentRunner {
         createdAt: new Date(),
       };
 
-      this.store.updateAgent(agentName, { status: "blocked" });
+      // Status derives as "blocked" from the pendingPermission field.
       this.onStatusChange?.(agentName);
 
       // Set up block timeout.

@@ -141,3 +141,70 @@ export type PendingPermission = {
   resolve: (result: PermissionResult) => void;
   createdAt: Date;
 };
+
+// --- Session types (new, coexisting with Agent types until migration) ---
+
+// Session record. Like Agent but without `status` and `stoppedAt` —
+// status is derived at runtime, not stored.
+export type Session = {
+  id: string;
+  name: string;
+  sessionId: string | null;
+  model: string | null;
+  cwd: string;
+  prompt: string | null;
+  permissionMode: string | null;
+  maxTurns: number | null;
+  allowedTools: string | null;
+  lastError: string | null;
+  createdAt: string;
+};
+
+// Derived session status — computed from in-memory runner state,
+// never persisted.
+export type SessionStatus = "idle" | "running" | "blocked" | "failed";
+
+// A session with its derived status attached.
+export type SessionWithStatus = Session & { status: SessionStatus };
+
+// Arguments for creating a new session (same shape as CreateAgentArgs).
+export type CreateSessionArgs = {
+  name: string;
+  cwd: string;
+  prompt?: string | null;
+  model?: string | null;
+  permissionMode?: string | null;
+  maxTurns?: number | null;
+  allowedTools?: string | null;
+};
+
+// Fields that can be updated on an existing session.
+// Drops `status` and `stoppedAt` (not stored), keeps `lastError`.
+export type UpdateSessionFields = {
+  sessionId?: string | null;
+  model?: string | null;
+  prompt?: string | null;
+  permissionMode?: string | null;
+  maxTurns?: number | null;
+  allowedTools?: string | null;
+  lastError?: string | null;
+};
+
+/**
+ * Derive session status from in-memory state.
+ *
+ * - No active query + lastError null  → "idle"
+ * - No active query + lastError set   → "failed"
+ * - Active query + no pendingPermission → "running"
+ * - Active query + pendingPermission   → "blocked"
+ */
+export function sessionStatus(
+  session: { name: string; lastError: string | null },
+  activeQueries: Map<string, { pendingPermission: unknown | null }>,
+): SessionStatus {
+  const query = activeQueries.get(session.name);
+  if (!query) {
+    return session.lastError ? "failed" : "idle";
+  }
+  return query.pendingPermission ? "blocked" : "running";
+}

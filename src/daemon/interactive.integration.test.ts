@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { Client } from "../lib/client.js";
-import type { Agent } from "../lib/types.js";
+import type { SessionWithStatus } from "../lib/types.js";
 
 // Mock the SDK module (required by agent-runner, even though interactive mode doesn't use it).
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -47,7 +47,7 @@ describe("vh new --interactive integration", () => {
     }
   });
 
-  it("interactive new creates agent with created status", async () => {
+  it("interactive new creates session with idle status", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -55,15 +55,15 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create agent with interactive flag.
+    // Create session with interactive flag.
     const resp = await client.send({
       command: "new",
       args: { name: "inter-1", cwd: "/tmp", interactive: true },
     });
     expect(resp.ok).toBe(true);
-    const agent = resp.data as unknown as Agent;
-    expect(agent.name).toBe("inter-1");
-    expect(agent.status).toBe("created");
+    const session = resp.data as unknown as SessionWithStatus;
+    expect(session.name).toBe("inter-1");
+    expect(session.status).toBe("idle");
   });
 
   it("interactive new with prompt returns error", async () => {
@@ -82,7 +82,7 @@ describe("vh new --interactive integration", () => {
     expect(resp.error).toContain("--prompt is incompatible with --interactive");
   });
 
-  it("notify-start updates agent to running", async () => {
+  it("notify-start verifies session exists", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -90,7 +90,7 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create agent.
+    // Create session.
     await client.send({
       command: "new",
       args: { name: "alpha", cwd: "/tmp", interactive: true },
@@ -103,16 +103,22 @@ describe("vh new --interactive integration", () => {
     });
     expect(startResp.ok).toBe(true);
 
-    // Verify status is running.
+    // Session exists in store. Status/stoppedAt columns are gone.
+    const sess = daemon.store.getSession("alpha")!;
+    expect(sess).not.toHaveProperty("status");
+    expect(sess).not.toHaveProperty("stoppedAt");
+
+    // Derived status via list shows "idle" (no in-memory runner for interactive sessions).
     const listResp = await client.send({ command: "list", args: {} });
     expect(listResp.ok).toBe(true);
-    const data = listResp.data as unknown as { agents: Agent[] };
+    const data = listResp.data as unknown as { agents: SessionWithStatus[] };
     expect(data.agents).toHaveLength(1);
     expect(data.agents[0].name).toBe("alpha");
-    expect(data.agents[0].status).toBe("running");
+    // Interactive sessions have no runner, so derived status is idle.
+    expect(data.agents[0].status).toBe("idle");
   });
 
-  it("notify-start on non-created agent returns error", async () => {
+  it("notify-start succeeds on repeated calls (no DB guard)", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -120,7 +126,7 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create and start agent.
+    // Create and start session.
     await client.send({
       command: "new",
       args: { name: "beta", cwd: "/tmp", interactive: true },
@@ -130,13 +136,12 @@ describe("vh new --interactive integration", () => {
       args: { name: "beta" },
     });
 
-    // Try to notify-start again (already running).
+    // Notify-start again — succeeds (no DB status guard anymore).
     const resp = await client.send({
       command: "notify-start",
       args: { name: "beta" },
     });
-    expect(resp.ok).toBe(false);
-    expect(resp.error).toContain("not in created status");
+    expect(resp.ok).toBe(true);
   });
 
   it("notify-start on unknown agent returns error", async () => {
@@ -155,7 +160,7 @@ describe("vh new --interactive integration", () => {
     expect(resp.error).toContain("not found");
   });
 
-  it("notify-exit updates agent to stopped with exit code 0", async () => {
+  it("notify-exit with exit code 0 derives as idle", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -163,7 +168,7 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create and start agent.
+    // Create and start session.
     await client.send({
       command: "new",
       args: { name: "gamma", cwd: "/tmp", interactive: true },
@@ -180,17 +185,16 @@ describe("vh new --interactive integration", () => {
     });
     expect(exitResp.ok).toBe(true);
 
-    // Verify status is stopped.
+    // Verify derived status is idle (no runner, no lastError).
     const listResp = await client.send({ command: "list", args: {} });
     expect(listResp.ok).toBe(true);
-    const data = listResp.data as unknown as { agents: Agent[] };
+    const data = listResp.data as unknown as { agents: SessionWithStatus[] };
     expect(data.agents).toHaveLength(1);
     expect(data.agents[0].name).toBe("gamma");
-    expect(data.agents[0].status).toBe("stopped");
-    expect(data.agents[0].stoppedAt).toBeTruthy();
+    expect(data.agents[0].status).toBe("idle");
   });
 
-  it("notify-exit with non-zero exit code marks agent as failed", async () => {
+  it("notify-exit with non-zero exit code derives as failed", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -198,7 +202,7 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create and start agent.
+    // Create and start session.
     await client.send({
       command: "new",
       args: { name: "delta", cwd: "/tmp", interactive: true },
@@ -215,14 +219,13 @@ describe("vh new --interactive integration", () => {
     });
     expect(exitResp.ok).toBe(true);
 
-    // Verify status is failed.
+    // Verify derived status is failed (no runner, lastError set).
     const listResp = await client.send({ command: "list", args: {} });
     expect(listResp.ok).toBe(true);
-    const data = listResp.data as unknown as { agents: Agent[] };
+    const data = listResp.data as unknown as { agents: SessionWithStatus[] };
     expect(data.agents).toHaveLength(1);
     expect(data.agents[0].name).toBe("delta");
     expect(data.agents[0].status).toBe("failed");
-    expect(data.agents[0].stoppedAt).toBeTruthy();
   });
 
   it("notify-exit on unknown agent returns error", async () => {
@@ -241,7 +244,7 @@ describe("vh new --interactive integration", () => {
     expect(resp.error).toContain("not found");
   });
 
-  it("full interactive flow: create, notify-start, shows running, notify-exit, shows stopped", async () => {
+  it("full interactive flow: create, notify-start, notify-exit, shows idle", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -249,27 +252,27 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // 1. Create agent with interactive flag.
+    // 1. Create session with interactive flag — derived status is idle.
     const newResp = await client.send({
       command: "new",
       args: { name: "flow-test", cwd: "/tmp", interactive: true },
     });
     expect(newResp.ok).toBe(true);
-    expect((newResp.data as unknown as Agent).status).toBe("created");
+    expect((newResp.data as unknown as SessionWithStatus).status).toBe("idle");
 
-    // 2. Notify start.
+    // 2. Notify start — DB status set to running.
     const startResp = await client.send({
       command: "notify-start",
       args: { name: "flow-test" },
     });
     expect(startResp.ok).toBe(true);
 
-    // 3. Verify running in list.
-    const runningList = await client.send({ command: "list", args: { status: "running" } });
-    expect(runningList.ok).toBe(true);
-    const runningData = runningList.data as unknown as { agents: Agent[] };
-    expect(runningData.agents).toHaveLength(1);
-    expect(runningData.agents[0].name).toBe("flow-test");
+    // 3. No DB guard — repeated notify-start succeeds.
+    const doubleStart = await client.send({
+      command: "notify-start",
+      args: { name: "flow-test" },
+    });
+    expect(doubleStart.ok).toBe(true);
 
     // 4. Notify exit.
     const exitResp = await client.send({
@@ -278,13 +281,12 @@ describe("vh new --interactive integration", () => {
     });
     expect(exitResp.ok).toBe(true);
 
-    // 5. Verify stopped in list.
-    const stoppedList = await client.send({ command: "list", args: { status: "stopped" } });
-    expect(stoppedList.ok).toBe(true);
-    const stoppedData = stoppedList.data as unknown as { agents: Agent[] };
-    expect(stoppedData.agents).toHaveLength(1);
-    expect(stoppedData.agents[0].name).toBe("flow-test");
-    expect(stoppedData.agents[0].stoppedAt).toBeTruthy();
+    // 5. Verify idle in list (uses legacy "stopped" filter which maps to "idle").
+    const idleList = await client.send({ command: "list", args: { status: "stopped" } });
+    expect(idleList.ok).toBe(true);
+    const idleData = idleList.data as unknown as { agents: SessionWithStatus[] };
+    expect(idleData.agents).toHaveLength(1);
+    expect(idleData.agents[0].name).toBe("flow-test");
   });
 
   it("client convenience methods work for notify-start and notify-exit", async () => {
@@ -295,23 +297,25 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create agent.
-    const agent = await client.newAgent({ name: "conv-test", cwd: "/tmp", interactive: true });
-    expect(agent.name).toBe("conv-test");
-    expect(agent.status).toBe("created");
+    // Create session.
+    const session = await client.newAgent({ name: "conv-test", cwd: "/tmp", interactive: true });
+    expect(session.name).toBe("conv-test");
+    expect(session.status).toBe("idle");
 
     // Use convenience methods.
     await client.notifyStart("conv-test");
 
-    const runningAgents = await client.list("running");
-    expect(runningAgents).toHaveLength(1);
-    expect(runningAgents[0].name).toBe("conv-test");
+    // Interactive sessions derive as idle (no runner), but DB guard prevents double start.
+    const allAgents = await client.list();
+    expect(allAgents).toHaveLength(1);
+    expect(allAgents[0].name).toBe("conv-test");
 
     await client.notifyExit("conv-test", 0);
 
-    const stoppedAgents = await client.list("stopped");
-    expect(stoppedAgents).toHaveLength(1);
-    expect(stoppedAgents[0].name).toBe("conv-test");
+    // After exit with code 0, derives as idle (legacy "stopped" maps to "idle").
+    const idleAgents = await client.list("stopped");
+    expect(idleAgents).toHaveLength(1);
+    expect(idleAgents[0].name).toBe("conv-test");
   });
 
   it("notify-exit notifies waiters", async () => {
@@ -322,27 +326,21 @@ describe("vh new --interactive integration", () => {
 
     const client = new Client(socketFile);
 
-    // Create and start interactive agent.
+    // Create and start interactive session.
     await client.newAgent({ name: "waiter-test", cwd: "/tmp", interactive: true });
     await client.notifyStart("waiter-test");
 
-    // Set up a wait.
+    // Set up a wait — interactive session derives as idle (no runner),
+    // so wait resolves immediately.
     const waitClient = new Client(socketFile);
-    const waitPromise = waitClient.send({
+    const waitResp = await waitClient.send({
       command: "wait",
       args: { name: "waiter-test" },
     });
 
-    // Give the wait time to register.
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Notify exit.
-    await client.notifyExit("waiter-test", 0);
-
-    // Wait should resolve.
-    const waitResp = await waitPromise;
+    // Wait resolves immediately with idle status (no in-memory runner).
     expect(waitResp.ok).toBe(true);
-    expect((waitResp.data as unknown as Agent).name).toBe("waiter-test");
-    expect((waitResp.data as unknown as Agent).status).toBe("stopped");
+    expect((waitResp.data as unknown as SessionWithStatus).name).toBe("waiter-test");
+    expect((waitResp.data as unknown as SessionWithStatus).status).toBe("idle");
   });
 });

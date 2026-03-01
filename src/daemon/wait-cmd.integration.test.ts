@@ -123,7 +123,7 @@ describe("vh wait command integration", () => {
     }
   });
 
-  it("wait on running agent that stops returns stopped status", async () => {
+  it("wait on running session that stops returns idle status", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -132,8 +132,8 @@ describe("vh wait command integration", () => {
     const ctrl = createControllableResponse();
     mockQuery.mockImplementation(() => ctrl.generator);
 
-    // Create and start an agent.
-    const agent = daemon.store.createAgent({ name: "alpha", cwd: "/tmp" });
+    // Create and start a session.
+    const agent = daemon.store.createSession({ name: "alpha", cwd: "/tmp" });
     const runner = daemon.createRunner("alpha");
     runner.start(agent, "hello");
 
@@ -144,17 +144,16 @@ describe("vh wait command integration", () => {
     // Give the wait request time to register.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Agent finishes successfully.
+    // Session finishes successfully.
     ctrl.push(successResult("sess-alpha"));
     ctrl.done();
 
     const result = await waitPromise;
     expect(result.name).toBe("alpha");
-    expect(result.status).toBe("stopped");
-    // Exit code 0 equivalent: status is "stopped".
+    expect(result.status).toBe("idle");
   });
 
-  it("wait on running agent that fails returns failed status", async () => {
+  it("wait on running session that fails returns failed status", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -163,8 +162,8 @@ describe("vh wait command integration", () => {
     const ctrl = createControllableResponse();
     mockQuery.mockImplementation(() => ctrl.generator);
 
-    // Create and start an agent.
-    const agent = daemon.store.createAgent({ name: "beta", cwd: "/tmp" });
+    // Create and start a session.
+    const agent = daemon.store.createSession({ name: "beta", cwd: "/tmp" });
     const runner = daemon.createRunner("beta");
     runner.start(agent, "go");
 
@@ -175,7 +174,7 @@ describe("vh wait command integration", () => {
     // Give the wait request time to register.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Agent fails: emit a result message with is_error: true.
+    // Session fails: emit a result message with is_error: true.
     ctrl.push({
       type: "result",
       subtype: "error_max_turns",
@@ -197,30 +196,25 @@ describe("vh wait command integration", () => {
     const result = await waitPromise;
     expect(result.name).toBe("beta");
     expect(result.status).toBe("failed");
-    // Exit code 1 equivalent: status is "failed".
   });
 
-  it("wait on already-stopped agent returns immediately", async () => {
+  it("wait on already-idle session returns immediately", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
     await daemon.start(socketFile);
 
-    // Create an agent that is already stopped.
-    daemon.store.createAgent({ name: "gamma", cwd: "/tmp" });
-    daemon.store.updateAgent("gamma", {
-      status: "stopped",
-      stoppedAt: new Date().toISOString(),
-    });
+    // Create a session (no runner, derives as idle).
+    daemon.store.createSession({ name: "gamma", cwd: "/tmp" });
 
     const client = new Client(socketFile);
     const result = await client.wait("gamma");
 
     expect(result.name).toBe("gamma");
-    expect(result.status).toBe("stopped");
+    expect(result.status).toBe("idle");
   });
 
-  it("wait on agent that becomes blocked returns blocked status", async () => {
+  it("wait on session that becomes blocked returns blocked status", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -243,8 +237,8 @@ describe("vh wait command integration", () => {
       },
     );
 
-    // Create and start an agent.
-    const agent = daemon.store.createAgent({ name: "delta", cwd: "/tmp" });
+    // Create and start a session.
+    const agent = daemon.store.createSession({ name: "delta", cwd: "/tmp" });
     const runner = daemon.createRunner("delta");
     runner.start(agent, "go");
 
@@ -267,7 +261,7 @@ describe("vh wait command integration", () => {
     // Give the wait request time to register.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Trigger a permission request, which blocks the agent.
+    // Trigger a permission request, which blocks the session.
     expect(capturedCanUseTool).toBeDefined();
     capturedCanUseTool("Bash", { command: "ls" });
 
@@ -275,7 +269,6 @@ describe("vh wait command integration", () => {
     const result = await waitPromise;
     expect(result.name).toBe("delta");
     expect(result.status).toBe("blocked");
-    // Exit code 1 equivalent: status is "blocked".
 
     // Clean up: resolve the permission and finish the runner.
     runner.resolvePermission({ behavior: "deny", message: "test" });
@@ -283,7 +276,7 @@ describe("vh wait command integration", () => {
     await runner.queryPromise;
   });
 
-  it("wait on non-existent agent returns error", async () => {
+  it("wait on non-existent session returns error", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -292,11 +285,11 @@ describe("vh wait command integration", () => {
     const client = new Client(socketFile);
 
     await expect(client.wait("nonexistent")).rejects.toThrow(
-      "agent 'nonexistent' not found",
+      "session 'nonexistent' not found",
     );
   });
 
-  it("timeout resolves before agent finishes", async () => {
+  it("timeout resolves before session finishes", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -305,12 +298,12 @@ describe("vh wait command integration", () => {
     const ctrl = createControllableResponse();
     mockQuery.mockImplementation(() => ctrl.generator);
 
-    // Create and start an agent.
-    const agent = daemon.store.createAgent({ name: "epsilon", cwd: "/tmp" });
+    // Create and start a session.
+    const agent = daemon.store.createSession({ name: "epsilon", cwd: "/tmp" });
     const runner = daemon.createRunner("epsilon");
     runner.start(agent, "hello");
 
-    // Use a very short timeout (50ms). The agent won't finish in time.
+    // Use a very short timeout (50ms). The session won't finish in time.
     const client = new Client(socketFile);
     const timeoutPromise = new Promise<"timeout">((resolve) => {
       setTimeout(() => resolve("timeout"), 50);
@@ -323,7 +316,7 @@ describe("vh wait command integration", () => {
 
     expect(result).toBe("timeout");
 
-    // Clean up: finish the agent.
+    // Clean up: finish the session.
     ctrl.push(successResult("sess-epsilon"));
     ctrl.done();
     // Wait for the runner to finish to avoid dangling promises.
