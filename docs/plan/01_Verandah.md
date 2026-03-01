@@ -91,7 +91,7 @@ Build and parse `claude` CLI commands from Go.
   - Verify stream-json parsing extracts session ID from system event
   - Verify error handling for malformed output
 
-### [ ] 6. Process manager
+### [x] 6. Process manager
 
 Spawn and manage child processes.
 
