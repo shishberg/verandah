@@ -108,6 +108,23 @@ export class Client {
   }
 
   /**
+   * Send a message to an existing agent.
+   * - Created agent: starts with message as prompt.
+   * - Stopped/failed agent: resumes with message.
+   * - Running/blocked agent: throws an error.
+   */
+  async sendMessage(name: string, message: string): Promise<Agent> {
+    const response = await this.send({
+      command: "send",
+      args: { name, message },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "send failed");
+    }
+    return response.data as unknown as Agent;
+  }
+
+  /**
    * Wait for an agent to reach a terminal status (stopped, failed, blocked).
    * Returns the agent data when it reaches a terminal state.
    */

@@ -205,7 +205,7 @@ First end-to-end commands.
   - Random name generation
   - Name collision error
 
-### [ ] 10. `vh send`
+### [x] 10. `vh send`
 
 - `src/cli/commands/send.ts`: `vh send <name> <message>` (or `-` for stdin), `--wait`
 - `src/daemon/handlers.ts`: `handleSend`

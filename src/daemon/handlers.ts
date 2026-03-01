@@ -1,5 +1,5 @@
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 
 /** Regex for validating agent names. */
@@ -101,4 +101,66 @@ export function handleList(
     ok: true,
     data: { agents: agents as unknown as Record<string, unknown>[] } as unknown as Record<string, unknown>,
   };
+}
+
+/**
+ * Handle a `send` command: send a message to an existing agent.
+ *
+ * - `created` status (never started): store message as prompt, start runner.
+ * - `stopped` or `failed` status: resume runner with message.
+ * - `running` status: error.
+ * - `blocked` status: error with guidance.
+ */
+export function handleSend(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const sendArgs = args as unknown as SendArgs;
+
+  // Look up agent by name.
+  const agent = daemon.store.getAgent(sendArgs.name);
+  if (!agent) {
+    return { ok: false, error: `agent '${sendArgs.name}' not found` };
+  }
+
+  switch (agent.status) {
+    case "running":
+      return { ok: false, error: `agent '${sendArgs.name}' is already running` };
+
+    case "blocked":
+      return {
+        ok: false,
+        error: `agent '${sendArgs.name}' is blocked waiting for approval. Use 'vh permission allow ${sendArgs.name}' to unblock it.`,
+      };
+
+    case "created": {
+      // Agent was created but never started. Store message as prompt and start.
+      daemon.store.updateAgent(agent.name, { prompt: sendArgs.message });
+      const updatedAgent = daemon.store.getAgent(agent.name)!;
+      const runner = daemon.createRunner(agent.name);
+      runner.start(updatedAgent, sendArgs.message);
+      // Re-read agent to get the updated status (running).
+      const result = daemon.store.getAgent(agent.name)!;
+      return { ok: true, data: result as unknown as Record<string, unknown> };
+    }
+
+    case "stopped":
+    case "failed": {
+      // Resume the agent with the new message.
+      const runner = daemon.createRunner(agent.name);
+      if (agent.sessionId) {
+        runner.resume(agent, sendArgs.message);
+      } else {
+        // No session — treat like a fresh start.
+        daemon.store.updateAgent(agent.name, { prompt: sendArgs.message });
+        const freshAgent = daemon.store.getAgent(agent.name)!;
+        runner.start(freshAgent, sendArgs.message);
+      }
+      const result = daemon.store.getAgent(agent.name)!;
+      return { ok: true, data: result as unknown as Record<string, unknown> };
+    }
+
+    default:
+      return { ok: false, error: `unexpected agent status: ${agent.status}` };
+  }
 }
