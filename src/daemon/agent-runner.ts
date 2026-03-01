@@ -294,7 +294,8 @@ export class AgentRunner {
 
   private appendToLog(agentName: string, message: SDKMessage): void {
     const filePath = logPath(agentName, this.vhHome);
-    fs.appendFileSync(filePath, JSON.stringify(message) + "\n");
+    const entry = { ...message, timestamp_ms: Date.now() };
+    fs.appendFileSync(filePath, JSON.stringify(entry) + "\n");
   }
 }
 

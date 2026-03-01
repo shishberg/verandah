@@ -114,12 +114,12 @@ describe("parseLogProgress", () => {
     expect(result.turns).toBe(1);
   });
 
-  it("captures startedAt from system init with no timestamp (sets to 0)", () => {
+  it("returns null startedAt when system init has no timestamp_ms", () => {
     const logFile = writeTmpLog([
       { type: "system", subtype: "init", session_id: "s1", model: "m", cwd: "/" },
     ]);
     const result = parseLogProgress(logFile);
-    expect(result.startedAt).toBe(0);
+    expect(result.startedAt).toBeNull();
   });
 
   it("captures startedAt from system init with timestamp_ms", () => {

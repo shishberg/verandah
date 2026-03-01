@@ -101,15 +101,8 @@ export function parseLogProgress(logFilePath: string): LogProgress {
 
     // Count system init for start time.
     if (msg.type === "system" && msg.subtype === "init") {
-      // Use the timestamp field if available, otherwise use current time as fallback.
       if (typeof msg.timestamp_ms === "number") {
         progress.startedAt = msg.timestamp_ms;
-      } else if (typeof msg.timestamp === "string") {
-        progress.startedAt = new Date(msg.timestamp as string).getTime();
-      } else if (progress.startedAt === null) {
-        // No timestamp in message; we'll compute elapsed from "now" at print time
-        // using a rough heuristic. Store 0 so we know we saw init.
-        progress.startedAt = 0;
       }
     }
 
