@@ -341,7 +341,7 @@ A single integration test exercising the full workflow with mocked SDK:
 - `vh rm --force alpha`
 - `vh ls` is empty
 
-### [ ] 18. Permission approval smoke test
+### [x] 18. Permission approval smoke test
 
 An integration test exercising the blocked → approve → running → stopped flow:
 
