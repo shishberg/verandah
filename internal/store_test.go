@@ -1,9 +1,12 @@
 package internal
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -26,8 +29,8 @@ func TestNewStore_CreatesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 1 {
-		t.Errorf("schema version = %d, want 1", version)
+	if version != 2 {
+		t.Errorf("schema version = %d, want 2", version)
 	}
 
 	// Verify agents table exists by querying it.
@@ -437,6 +440,103 @@ func TestDeleteAgent_NotFound(t *testing.T) {
 	want := "agent 'nonexistent' not found"
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestCreateAgent_WithPassthroughFields(t *testing.T) {
+	s := newTestStore(t)
+
+	permMode := "auto"
+	maxTurns := 5
+	allowedTools := "Read,Write,Bash"
+
+	agent := Agent{
+		Name:           "charlie",
+		Status:         "created",
+		CWD:            "/tmp/test",
+		PermissionMode: &permMode,
+		MaxTurns:       &maxTurns,
+		AllowedTools:   &allowedTools,
+	}
+
+	if err := s.CreateAgent(agent); err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	got, err := s.GetAgent("charlie")
+	if err != nil {
+		t.Fatalf("GetAgent: %v", err)
+	}
+	if got.PermissionMode == nil || *got.PermissionMode != "auto" {
+		t.Errorf("PermissionMode = %v, want %q", got.PermissionMode, "auto")
+	}
+	if got.MaxTurns == nil || *got.MaxTurns != 5 {
+		t.Errorf("MaxTurns = %v, want 5", got.MaxTurns)
+	}
+	if got.AllowedTools == nil || *got.AllowedTools != "Read,Write,Bash" {
+		t.Errorf("AllowedTools = %v, want %q", got.AllowedTools, "Read,Write,Bash")
+	}
+}
+
+func TestMigrateV1ToV2(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// Create a v1 database manually.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE schema_version (version INTEGER NOT NULL);
+		INSERT INTO schema_version (version) VALUES (1);
+		CREATE TABLE agents (
+			id         TEXT PRIMARY KEY,
+			name       TEXT UNIQUE NOT NULL,
+			session_id TEXT,
+			pid        INTEGER,
+			status     TEXT NOT NULL DEFAULT 'created',
+			model      TEXT,
+			cwd        TEXT NOT NULL,
+			prompt     TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			stopped_at TIMESTAMP
+		);
+		INSERT INTO agents (id, name, status, cwd) VALUES ('test-id', 'old-agent', 'created', '/tmp');
+	`)
+	if err != nil {
+		t.Fatalf("create v1 schema: %v", err)
+	}
+	_ = db.Close()
+
+	// Open with NewStore, which should migrate to v2.
+	s, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore after v1: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	// Verify schema version is now 2.
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version").Scan(&version); err != nil {
+		t.Fatalf("query version: %v", err)
+	}
+	if version != 2 {
+		t.Errorf("schema version = %d, want 2", version)
+	}
+
+	// Verify the old agent is accessible and new columns are nil.
+	got, err := s.GetAgent("old-agent")
+	if err != nil {
+		t.Fatalf("GetAgent: %v", err)
+	}
+	if got.PermissionMode != nil {
+		t.Errorf("PermissionMode = %v, want nil", got.PermissionMode)
+	}
+	if got.MaxTurns != nil {
+		t.Errorf("MaxTurns = %v, want nil", got.MaxTurns)
+	}
+	if got.AllowedTools != nil {
+		t.Errorf("AllowedTools = %v, want nil", got.AllowedTools)
 	}
 }
 

@@ -74,7 +74,7 @@ Extend `github.com/shishberg/llmock` to support a CLI mode that mocks the `claud
 - Verandah tests will build this mock and set `PATH` to find it
 - Test the mock binary directly: invoke it, verify JSON output, verify flags are parsed
 
-### [ ] 5. Claude CLI wrapper
+### [x] 5. Claude CLI wrapper
 
 Build and parse `claude` CLI commands from Go.
 

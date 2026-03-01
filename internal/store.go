@@ -11,20 +11,23 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 // Agent represents an agent record in the database.
 type Agent struct {
-	ID        string
-	Name      string
-	SessionID *string
-	PID       *int
-	Status    string
-	Model     *string
-	CWD       string
-	Prompt    *string
-	CreatedAt time.Time
-	StoppedAt *time.Time
+	ID             string
+	Name           string
+	SessionID      *string
+	PID            *int
+	Status         string
+	Model          *string
+	CWD            string
+	Prompt         *string
+	PermissionMode *string
+	MaxTurns       *int
+	AllowedTools   *string
+	CreatedAt      time.Time
+	StoppedAt      *time.Time
 }
 
 // AgentUpdate holds optional fields for updating an agent.
@@ -129,19 +132,22 @@ func (s *Store) createSchema() error {
 			version INTEGER NOT NULL
 		);
 
-		INSERT INTO schema_version (version) VALUES (1);
+		INSERT INTO schema_version (version) VALUES (2);
 
 		CREATE TABLE agents (
-			id         TEXT PRIMARY KEY,
-			name       TEXT UNIQUE NOT NULL,
-			session_id TEXT,
-			pid        INTEGER,
-			status     TEXT NOT NULL DEFAULT 'created',
-			model      TEXT,
-			cwd        TEXT NOT NULL,
-			prompt     TEXT,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			stopped_at TIMESTAMP
+			id              TEXT PRIMARY KEY,
+			name            TEXT UNIQUE NOT NULL,
+			session_id      TEXT,
+			pid             INTEGER,
+			status          TEXT NOT NULL DEFAULT 'created',
+			model           TEXT,
+			cwd             TEXT NOT NULL,
+			prompt          TEXT,
+			permission_mode TEXT,
+			max_turns       INTEGER,
+			allowed_tools   TEXT,
+			created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			stopped_at      TIMESTAMP
 		);
 	`
 
@@ -153,9 +159,34 @@ func (s *Store) createSchema() error {
 }
 
 func (s *Store) runMigration(version int) error {
-	// No migrations yet beyond v1 (the initial schema).
-	// Future migrations will be added here as cases.
-	return fmt.Errorf("unknown migration version %d", version)
+	switch version {
+	case 2:
+		return s.migrateToV2()
+	default:
+		return fmt.Errorf("unknown migration version %d", version)
+	}
+}
+
+func (s *Store) migrateToV2() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmts := []string{
+		"ALTER TABLE agents ADD COLUMN permission_mode TEXT",
+		"ALTER TABLE agents ADD COLUMN max_turns INTEGER",
+		"ALTER TABLE agents ADD COLUMN allowed_tools TEXT",
+		"UPDATE schema_version SET version = 2",
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt, err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // generateID creates a new ULID for an agent.
@@ -171,8 +202,9 @@ func (s *Store) CreateAgent(agent Agent) error {
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO agents (id, name, session_id, pid, status, model, cwd, prompt, created_at, stopped_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO agents (id, name, session_id, pid, status, model, cwd, prompt,
+		 permission_mode, max_turns, allowed_tools, created_at, stopped_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID,
 		agent.Name,
 		agent.SessionID,
@@ -181,6 +213,9 @@ func (s *Store) CreateAgent(agent Agent) error {
 		agent.Model,
 		agent.CWD,
 		agent.Prompt,
+		agent.PermissionMode,
+		agent.MaxTurns,
+		agent.AllowedTools,
 		agent.CreatedAt,
 		agent.StoppedAt,
 	)
@@ -195,12 +230,15 @@ func (s *Store) CreateAgent(agent Agent) error {
 func (s *Store) GetAgent(name string) (Agent, error) {
 	var a Agent
 	err := s.db.QueryRow(
-		`SELECT id, name, session_id, pid, status, model, cwd, prompt, created_at, stopped_at
+		`SELECT id, name, session_id, pid, status, model, cwd, prompt,
+		 permission_mode, max_turns, allowed_tools, created_at, stopped_at
 		 FROM agents WHERE name = ?`,
 		name,
 	).Scan(
 		&a.ID, &a.Name, &a.SessionID, &a.PID, &a.Status,
-		&a.Model, &a.CWD, &a.Prompt, &a.CreatedAt, &a.StoppedAt,
+		&a.Model, &a.CWD, &a.Prompt,
+		&a.PermissionMode, &a.MaxTurns, &a.AllowedTools,
+		&a.CreatedAt, &a.StoppedAt,
 	)
 	if err == sql.ErrNoRows {
 		return Agent{}, fmt.Errorf("agent '%s' not found", name)
@@ -219,12 +257,14 @@ func (s *Store) ListAgents(filter StatusFilter) ([]Agent, error) {
 
 	if filter == "" {
 		rows, err = s.db.Query(
-			`SELECT id, name, session_id, pid, status, model, cwd, prompt, created_at, stopped_at
+			`SELECT id, name, session_id, pid, status, model, cwd, prompt,
+			 permission_mode, max_turns, allowed_tools, created_at, stopped_at
 			 FROM agents ORDER BY created_at ASC`,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, name, session_id, pid, status, model, cwd, prompt, created_at, stopped_at
+			`SELECT id, name, session_id, pid, status, model, cwd, prompt,
+			 permission_mode, max_turns, allowed_tools, created_at, stopped_at
 			 FROM agents WHERE status = ? ORDER BY created_at ASC`,
 			string(filter),
 		)
@@ -239,7 +279,9 @@ func (s *Store) ListAgents(filter StatusFilter) ([]Agent, error) {
 		var a Agent
 		if err := rows.Scan(
 			&a.ID, &a.Name, &a.SessionID, &a.PID, &a.Status,
-			&a.Model, &a.CWD, &a.Prompt, &a.CreatedAt, &a.StoppedAt,
+			&a.Model, &a.CWD, &a.Prompt,
+			&a.PermissionMode, &a.MaxTurns, &a.AllowedTools,
+			&a.CreatedAt, &a.StoppedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
