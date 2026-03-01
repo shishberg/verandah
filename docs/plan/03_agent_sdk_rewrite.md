@@ -310,7 +310,7 @@ First end-to-end commands.
   - Error if agent not blocked
   - Error if answer used on non-AskUserQuestion
 
-### [ ] 16. `vh new --interactive`
+### [x] 16. `vh new --interactive`
 
 - Update `src/cli/commands/new.ts`: when `--interactive`, exec `claude` CLI directly with `stdio: "inherit"`
   - Set `VH_AGENT_NAME` and `CLAUDE_CONFIG_DIR` in env

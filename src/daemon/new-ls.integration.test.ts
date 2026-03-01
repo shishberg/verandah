@@ -352,7 +352,7 @@ describe("vh new + vh ls integration", () => {
     expect(data.agents).toHaveLength(0);
   });
 
-  it("interactive mode returns error", async () => {
+  it("interactive mode creates agent in created status", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -364,8 +364,10 @@ describe("vh new + vh ls integration", () => {
       command: "new",
       args: { name: "interactive-test", cwd: "/tmp", interactive: true },
     });
-    expect(resp.ok).toBe(false);
-    expect(resp.error).toContain("interactive mode not yet implemented");
+    expect(resp.ok).toBe(true);
+    const agent = resp.data as unknown as Agent;
+    expect(agent.name).toBe("interactive-test");
+    expect(agent.status).toBe("created");
   });
 
   it("invalid name returns error", async () => {

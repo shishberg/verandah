@@ -271,6 +271,32 @@ export class Client {
   }
 
   /**
+   * Notify the daemon that an interactive agent has started.
+   */
+  async notifyStart(name: string): Promise<void> {
+    const response = await this.send({
+      command: "notify-start",
+      args: { name },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "notify-start failed");
+    }
+  }
+
+  /**
+   * Notify the daemon that an interactive agent has exited.
+   */
+  async notifyExit(name: string, exitCode: number): Promise<void> {
+    const response = await this.send({
+      command: "notify-exit",
+      args: { name, exitCode },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "notify-exit failed");
+    }
+  }
+
+  /**
    * Send a single request without retry. Used internally.
    */
   private sendOnce(request: Request): Promise<Response> {

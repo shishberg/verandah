@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -29,7 +29,8 @@ function validateName(name: string): string | null {
  *
  * - Without `--prompt`: creates agent with `created` status, returns immediately.
  * - With `--prompt`: creates agent, starts runner, returns immediately (runner runs in background).
- * - With `--interactive`: returns error (not yet implemented).
+ * - With `--interactive`: creates agent record, returns immediately. The CLI handles
+ *   exec'ing claude and sends notify-start/notify-exit to update status.
  */
 export function handleNew(
   daemon: Daemon,
@@ -37,9 +38,13 @@ export function handleNew(
 ): Response {
   const newArgs = args as unknown as NewArgs;
 
-  // Interactive mode not yet implemented.
+  // Interactive mode: create agent record and return immediately.
+  // The CLI handles exec'ing claude and sending notify-start/notify-exit.
   if (newArgs.interactive) {
-    return { ok: false, error: "interactive mode not yet implemented" };
+    // Interactive mode does not use a prompt.
+    if (newArgs.prompt) {
+      return { ok: false, error: "--prompt is incompatible with --interactive" };
+    }
   }
 
   // Resolve the agent name.
@@ -456,4 +461,57 @@ export function handlePermission(
     default:
       return { ok: false, error: `unknown permission action: ${permArgs.action}` };
   }
+}
+
+/**
+ * Handle a `notify-start` command: mark an agent as running.
+ *
+ * Sent by the CLI after launching an interactive claude session.
+ */
+export function handleNotifyStart(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const { name } = args as unknown as NotifyStartArgs;
+
+  const agent = daemon.store.getAgent(name);
+  if (!agent) {
+    return { ok: false, error: `agent '${name}' not found` };
+  }
+
+  if (agent.status !== "created") {
+    return { ok: false, error: `agent '${name}' is not in created status (status: ${agent.status})` };
+  }
+
+  daemon.store.updateAgent(name, { status: "running" });
+
+  return { ok: true };
+}
+
+/**
+ * Handle a `notify-exit` command: mark an agent as stopped.
+ *
+ * Sent by the CLI after an interactive claude session exits.
+ */
+export function handleNotifyExit(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const { name, exitCode } = args as unknown as NotifyExitArgs;
+
+  const agent = daemon.store.getAgent(name);
+  if (!agent) {
+    return { ok: false, error: `agent '${name}' not found` };
+  }
+
+  const status = exitCode === 0 ? "stopped" : "failed";
+  daemon.store.updateAgent(name, {
+    status,
+    stoppedAt: new Date().toISOString(),
+  });
+
+  // Notify any waiters.
+  daemon.notifyWaiters(name);
+
+  return { ok: true };
 }

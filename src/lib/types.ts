@@ -113,6 +113,15 @@ export type PermissionArgs = {
   wait?: boolean;
 };
 
+export type NotifyStartArgs = {
+  name: string;
+};
+
+export type NotifyExitArgs = {
+  name: string;
+  exitCode: number;
+};
+
 // --- Runtime types ---
 
 // A pending permission request held in memory by the daemon.

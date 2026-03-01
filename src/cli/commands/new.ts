@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import { Client } from "../../lib/client.js";
-import { resolveVHHome, socketPath } from "../../lib/config.js";
+import { resolveVHHome, socketPath, claudeConfigDir } from "../../lib/config.js";
 import type { NewArgs } from "../../lib/types.js";
 
 /**
@@ -10,6 +11,8 @@ import type { NewArgs } from "../../lib/types.js";
  * Creates an agent record in the daemon. If `--prompt` is provided,
  * the agent is started immediately. If `--wait` is also provided,
  * the CLI blocks until the agent reaches a terminal status.
+ * If `--interactive` is provided, execs the claude CLI directly
+ * with stdio inherited.
  */
 export function registerNewCommand(program: Command): void {
   program
@@ -47,6 +50,11 @@ export function registerNewCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
+        if (opts.interactive && opts.prompt) {
+          process.stderr.write("error: --prompt is incompatible with --interactive\n");
+          process.exitCode = 1;
+          return;
+        }
 
         // Read prompt from stdin if `-` is specified.
         let prompt = opts.prompt;
@@ -78,6 +86,12 @@ export function registerNewCommand(program: Command): void {
 
         const agent = await client.newAgent(args);
 
+        // Interactive mode: exec claude CLI directly.
+        if (opts.interactive) {
+          await runInteractive(client, agent.name, vhHome, opts);
+          return;
+        }
+
         // If --wait, block until agent reaches terminal status.
         if (opts.wait) {
           const result = await client.wait(agent.name);
@@ -92,6 +106,79 @@ export function registerNewCommand(program: Command): void {
         process.exitCode = 1;
       }
     });
+}
+
+/**
+ * Run claude in interactive mode.
+ *
+ * 1. Notify daemon that the agent has started.
+ * 2. Spawn claude with stdio inherited.
+ * 3. Notify daemon when claude exits.
+ */
+async function runInteractive(
+  client: Client,
+  name: string,
+  vhHome: string,
+  opts: {
+    cwd: string;
+    model?: string;
+    permissionMode?: string;
+  },
+): Promise<void> {
+  // Notify daemon that the agent is starting.
+  await client.notifyStart(name);
+
+  // Build claude CLI arguments.
+  const claudeArgs: string[] = [];
+  if (opts.model) {
+    claudeArgs.push("--model", opts.model);
+  }
+  if (opts.permissionMode) {
+    claudeArgs.push("--permission-mode", opts.permissionMode);
+  }
+
+  // Build environment for the claude process.
+  const env = {
+    ...process.env,
+    VH_AGENT_NAME: name,
+    CLAUDE_CONFIG_DIR: claudeConfigDir(vhHome),
+  };
+
+  let exitCode = 0;
+  try {
+    const result = spawnSync("claude", claudeArgs, {
+      cwd: opts.cwd,
+      stdio: "inherit",
+      env,
+    });
+
+    if (result.error) {
+      // spawnSync failed (e.g. claude not found on PATH).
+      const msg = (result.error as NodeJS.ErrnoException).code === "ENOENT"
+        ? "claude CLI not found on PATH"
+        : `failed to launch claude: ${result.error.message}`;
+      process.stderr.write(`error: ${msg}\n`);
+      exitCode = 1;
+    } else {
+      exitCode = result.status ?? 1;
+    }
+  } catch (err) {
+    process.stderr.write(
+      `error: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    exitCode = 1;
+  }
+
+  // Notify daemon that the agent has exited.
+  try {
+    await client.notifyExit(name, exitCode);
+  } catch {
+    // Best-effort: daemon may have shut down.
+  }
+
+  if (exitCode !== 0) {
+    process.exitCode = exitCode;
+  }
 }
 
 function parseIntOption(value: string): number {
