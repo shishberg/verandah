@@ -120,7 +120,7 @@ Tests: integration test that creates an agent with a mock, runs
 
 ## Phase 2: Error surfacing
 
-### [ ] 3. Store `lastError` on agent record
+### [x] 3. Store `lastError` on agent record
 
 Add `last_error TEXT` column to the agents table (migration v1 → v2).
 Set it in the agent runner when a result message has `is_error: true`

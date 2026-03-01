@@ -67,7 +67,7 @@ export class AgentRunner {
     this.agentName = agent.name;
     this.abortController = new AbortController();
 
-    this.store.updateAgent(agent.name, { status: "running" });
+    this.store.updateAgent(agent.name, { status: "running", lastError: null });
     this.onStatusChange?.(agent.name);
 
     let response: Query;
@@ -110,7 +110,7 @@ export class AgentRunner {
     this.agentName = agent.name;
     this.abortController = new AbortController();
 
-    this.store.updateAgent(agent.name, { status: "running" });
+    this.store.updateAgent(agent.name, { status: "running", lastError: null });
     this.onStatusChange?.(agent.name);
 
     let response: Query;
@@ -203,8 +203,12 @@ export class AgentRunner {
 
         if (message.type === "result") {
           const status = message.is_error ? "failed" : "stopped";
+          const lastError = message.is_error
+            ? ((message as Record<string, unknown>).subtype as string) ?? null
+            : null;
           this.store.updateAgent(agentName, {
             status,
+            lastError,
             stoppedAt: new Date().toISOString(),
           });
           this.onStatusChange?.(agentName);

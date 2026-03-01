@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { ulid } from "ulid";
 import type { Agent, AgentStatus } from "./types.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const V1_MIGRATION = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -20,9 +20,14 @@ CREATE TABLE IF NOT EXISTS agents (
   permission_mode TEXT,
   max_turns       INTEGER,
   allowed_tools   TEXT,
+  last_error      TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
   stopped_at      TEXT
 );
+`;
+
+const V2_MIGRATION = `
+ALTER TABLE agents ADD COLUMN last_error TEXT;
 `;
 
 /** Arguments for creating a new agent. */
@@ -45,6 +50,7 @@ export type UpdateAgentFields = {
   permissionMode?: string | null;
   maxTurns?: number | null;
   allowedTools?: string | null;
+  lastError?: string | null;
   stoppedAt?: string | null;
 };
 
@@ -70,6 +76,7 @@ function rowToAgent(row: Record<string, unknown>): Agent {
     permissionMode: (row.permission_mode as string | null) ?? null,
     maxTurns: (row.max_turns as number | null) ?? null,
     allowedTools: (row.allowed_tools as string | null) ?? null,
+    lastError: (row.last_error as string | null) ?? null,
     createdAt: ensureUtcSuffix(row.created_at as string),
     stoppedAt: (row.stopped_at as string | null) ?? null,
   };
@@ -117,6 +124,11 @@ export class Store {
     if (currentVersion < 1) {
       this.db.exec(V1_MIGRATION);
       this.db.prepare("UPDATE schema_version SET version = ?").run(1);
+    }
+
+    if (currentVersion < 2) {
+      this.db.exec(V2_MIGRATION);
+      this.db.prepare("UPDATE schema_version SET version = ?").run(2);
     }
   }
 
@@ -210,6 +222,10 @@ export class Store {
     if (fields.allowedTools !== undefined) {
       setClauses.push("allowed_tools = ?");
       values.push(fields.allowedTools);
+    }
+    if (fields.lastError !== undefined) {
+      setClauses.push("last_error = ?");
+      values.push(fields.lastError);
     }
     if (fields.stoppedAt !== undefined) {
       setClauses.push("stopped_at = ?");

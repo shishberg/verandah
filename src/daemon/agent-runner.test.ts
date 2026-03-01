@@ -156,6 +156,27 @@ describe("AgentRunner", () => {
   });
 
   describe("start", () => {
+    it("clears lastError on start", async () => {
+      mockQuery.mockReturnValueOnce(createMockResponse([]));
+
+      createTestAgent(store, { name: "clear-err-agent" });
+      store.updateAgent("clear-err-agent", { lastError: "error_max_turns" });
+      expect(store.getAgent("clear-err-agent")!.lastError).toBe("error_max_turns");
+
+      const agent = store.getAgent("clear-err-agent")!;
+      const runner = new AgentRunner({
+        store,
+        vhHome,
+        blockTimeoutMs: 600000,
+      });
+
+      runner.start(agent, "hello");
+      // After start() is called, lastError should be cleared immediately.
+      expect(store.getAgent("clear-err-agent")!.lastError).toBeNull();
+
+      await waitForRunner(runner);
+    });
+
     it("messages flow, session ID extracted, status transitions to stopped", async () => {
       const initMessage = {
         type: "system",
@@ -214,6 +235,7 @@ describe("AgentRunner", () => {
       expect(updated.sessionId).toBe("sess-abc-123");
       expect(updated.status).toBe("stopped");
       expect(updated.stoppedAt).toBeTruthy();
+      expect(updated.lastError).toBeNull();
     });
 
     it("calls query with correct options", async () => {
@@ -288,6 +310,41 @@ describe("AgentRunner", () => {
       const updated = store.getAgent("err-agent")!;
       expect(updated.status).toBe("failed");
       expect(updated.stoppedAt).toBeTruthy();
+      expect(updated.lastError).toBe("error_during_execution");
+    });
+
+    it("stores lastError subtype on error result", async () => {
+      const resultMessage = {
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        duration_ms: 500,
+        duration_api_ms: 400,
+        num_turns: 50,
+        stop_reason: null,
+        total_cost_usd: 2.1,
+        usage: { input_tokens: 100, output_tokens: 200, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        modelUsage: {},
+        permission_denials: [],
+        errors: ["max turns exceeded"],
+        uuid: "00000000-0000-0000-0000-000000000002",
+        session_id: "sess-max",
+      };
+
+      mockQuery.mockReturnValueOnce(createMockResponse([resultMessage]));
+
+      const agent = createTestAgent(store, { name: "max-turns-agent" });
+      const runner = new AgentRunner({
+        store,
+        vhHome,
+        blockTimeoutMs: 600000,
+      });
+
+      runner.start(agent, "go");
+      await waitForRunner(runner);
+
+      const updated = store.getAgent("max-turns-agent")!;
+      expect(updated.lastError).toBe("error_max_turns");
     });
 
     it("status transitions to stopped when generator throws", async () => {
@@ -554,6 +611,30 @@ describe("AgentRunner", () => {
       const callArgs = mockQuery.mock.calls[0][0];
       expect(callArgs.prompt).toBe("continue please");
       expect(callArgs.options.resume).toBe("sess-existing");
+    });
+
+    it("clears lastError on resume", async () => {
+      mockQuery.mockReturnValueOnce(createMockResponse([]));
+
+      createTestAgent(store, { name: "resume-err-agent" });
+      store.updateAgent("resume-err-agent", {
+        sessionId: "sess-existing",
+        lastError: "error_max_turns",
+      });
+      const updatedAgent = store.getAgent("resume-err-agent")!;
+      expect(updatedAgent.lastError).toBe("error_max_turns");
+
+      const runner = new AgentRunner({
+        store,
+        vhHome,
+        blockTimeoutMs: 600000,
+      });
+
+      runner.resume(updatedAgent, "try again");
+      // After resume() is called, lastError should be cleared immediately.
+      expect(store.getAgent("resume-err-agent")!.lastError).toBeNull();
+
+      await waitForRunner(runner);
     });
   });
 

@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import { Store } from "./store.js";
 import type { AgentStatus } from "./types.js";
 
@@ -29,6 +33,55 @@ describe("Store", () => {
       expect(agent.name).toBe("test");
       store2.close();
     });
+
+    it("migrates v1 database to v2 adding last_error column", () => {
+      // Create a real v1 database on disk.
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-store-test-"));
+      const dbPath = path.join(tmpDir, "test.db");
+
+      try {
+        // Manually create a v1 schema.
+        const db = new Database(dbPath);
+        db.exec(`
+          CREATE TABLE schema_version (version INTEGER NOT NULL);
+          INSERT INTO schema_version (version) VALUES (1);
+
+          CREATE TABLE agents (
+            id              TEXT PRIMARY KEY,
+            name            TEXT UNIQUE NOT NULL,
+            session_id      TEXT,
+            status          TEXT NOT NULL DEFAULT 'created',
+            model           TEXT,
+            cwd             TEXT NOT NULL,
+            prompt          TEXT,
+            permission_mode TEXT,
+            max_turns       INTEGER,
+            allowed_tools   TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            stopped_at      TEXT
+          );
+        `);
+        // Insert a row before migration.
+        db.prepare(
+          "INSERT INTO agents (id, name, cwd) VALUES ('id1', 'old-agent', '/tmp')",
+        ).run();
+        db.close();
+
+        // Open with Store — should run v2 migration.
+        const store2 = new Store(dbPath);
+        const agent = store2.getAgent("old-agent");
+        expect(agent).not.toBeNull();
+        expect(agent!.lastError).toBeNull();
+
+        // Verify we can set lastError on the migrated record.
+        store2.updateAgent("old-agent", { lastError: "error_max_turns" });
+        expect(store2.getAgent("old-agent")!.lastError).toBe("error_max_turns");
+
+        store2.close();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("createAgent", () => {
@@ -45,6 +98,7 @@ describe("Store", () => {
       expect(agent.permissionMode).toBeNull();
       expect(agent.maxTurns).toBeNull();
       expect(agent.allowedTools).toBeNull();
+      expect(agent.lastError).toBeNull();
       expect(agent.createdAt).toBeTruthy();
       expect(agent.stoppedAt).toBeNull();
     });
@@ -190,6 +244,23 @@ describe("Store", () => {
         allowedTools: "Bash,Read,Write",
       });
       expect(updated!.allowedTools).toBe("Bash,Read,Write");
+    });
+
+    it("updates lastError field", () => {
+      store.createAgent({ name: "u-err", cwd: "/tmp" });
+      const updated = store.updateAgent("u-err", {
+        lastError: "error_max_turns",
+      });
+      expect(updated!.lastError).toBe("error_max_turns");
+    });
+
+    it("clears lastError to null", () => {
+      store.createAgent({ name: "u-err2", cwd: "/tmp" });
+      store.updateAgent("u-err2", { lastError: "error_max_turns" });
+      expect(store.getAgent("u-err2")!.lastError).toBe("error_max_turns");
+
+      const updated = store.updateAgent("u-err2", { lastError: null });
+      expect(updated!.lastError).toBeNull();
     });
 
     it("can set a field to null", () => {

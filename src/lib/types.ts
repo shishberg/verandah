@@ -19,6 +19,7 @@ export type Agent = {
   permissionMode: string | null;
   maxTurns: number | null;
   allowedTools: string | null;
+  lastError: string | null;
   createdAt: string;
   stoppedAt: string | null;
 };
