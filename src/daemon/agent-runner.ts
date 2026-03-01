@@ -16,6 +16,8 @@ export type AgentRunnerOptions = {
   blockTimeoutMs: number;
   /** Called when the runner finishes (query exhausted or error). */
   onDone?: (agentName: string) => void;
+  /** Called whenever the agent's status changes (running, blocked, stopped, failed). */
+  onStatusChange?: (agentName: string) => void;
 };
 
 /**
@@ -30,6 +32,7 @@ export class AgentRunner {
   readonly vhHome: string;
   readonly blockTimeoutMs: number;
   private onDone?: (agentName: string) => void;
+  private onStatusChange?: (agentName: string) => void;
 
   abortController: AbortController | null = null;
   queryPromise: Promise<void> | null = null;
@@ -42,6 +45,7 @@ export class AgentRunner {
     this.vhHome = options.vhHome;
     this.blockTimeoutMs = options.blockTimeoutMs;
     this.onDone = options.onDone;
+    this.onStatusChange = options.onStatusChange;
   }
 
   /**
@@ -52,6 +56,7 @@ export class AgentRunner {
     this.abortController = new AbortController();
 
     this.store.updateAgent(agent.name, { status: "running" });
+    this.onStatusChange?.(agent.name);
 
     const response = query({
       prompt,
@@ -85,6 +90,7 @@ export class AgentRunner {
     this.abortController = new AbortController();
 
     this.store.updateAgent(agent.name, { status: "running" });
+    this.onStatusChange?.(agent.name);
 
     const response = query({
       prompt: message,
@@ -143,6 +149,7 @@ export class AgentRunner {
     // Update status back to running (unless the query is about to end).
     if (this.agentName) {
       this.store.updateAgent(this.agentName, { status: "running" });
+      this.onStatusChange?.(this.agentName);
     }
 
     pp.resolve(result);
@@ -170,6 +177,7 @@ export class AgentRunner {
             status,
             stoppedAt: new Date().toISOString(),
           });
+          this.onStatusChange?.(agentName);
         }
       }
 
@@ -181,6 +189,7 @@ export class AgentRunner {
           status: "stopped",
           stoppedAt: new Date().toISOString(),
         });
+        this.onStatusChange?.(agentName);
       }
     } catch {
       // On error (including AbortError), mark as stopped.
@@ -190,6 +199,7 @@ export class AgentRunner {
           status: "stopped",
           stoppedAt: new Date().toISOString(),
         });
+        this.onStatusChange?.(agentName);
       }
     } finally {
       this.clearBlockTimer();
@@ -217,6 +227,7 @@ export class AgentRunner {
       };
 
       this.store.updateAgent(agentName, { status: "blocked" });
+      this.onStatusChange?.(agentName);
 
       // Set up block timeout.
       this.blockTimer = setTimeout(() => {

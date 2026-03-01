@@ -165,7 +165,7 @@ The core of the rewrite: manage agent lifecycle via the Agent SDK's `query()`.
   - Block timeout: auto-deny after timeout
   - Log file: messages written as JSON-lines
 
-### [ ] 8. Wait infrastructure
+### [x] 8. Wait infrastructure
 
 The daemon-side wait mechanism, used by `vh wait`, `vh new --wait`, `vh send --wait`, and `vh permission * --wait`.
 

@@ -2,7 +2,7 @@ import * as net from "node:net";
 import * as fs from "node:fs";
 import { Store } from "../lib/store.js";
 import { dbPath } from "../lib/config.js";
-import type { Request, Response } from "../lib/types.js";
+import type { Agent, Request, Response, WaitArgs } from "../lib/types.js";
 import { AgentRunner } from "./agent-runner.js";
 
 export type DaemonOptions = {
@@ -31,6 +31,9 @@ export class Daemon {
   /** Active agent runners, keyed by agent name. */
   readonly runners: Map<string, AgentRunner> = new Map();
 
+  /** Per-agent wait listeners. Each waiter resolves when the agent reaches a terminal status. */
+  readonly waiters: Map<string, Set<(agent: Agent) => void>> = new Map();
+
   constructor(vhHome: string, options?: DaemonOptions) {
     this.vhHome = vhHome;
     this.store = new Store(dbPath(vhHome));
@@ -49,6 +52,9 @@ export class Daemon {
       blockTimeoutMs: this.blockTimeoutMs,
       onDone: (name) => {
         this.runners.delete(name);
+      },
+      onStatusChange: (name) => {
+        this.notifyWaiters(name);
       },
     });
     this.runners.set(agentName, runner);
@@ -89,6 +95,9 @@ export class Daemon {
       runner.stop();
     }
     this.runners.clear();
+
+    // Clear all pending waiters.
+    this.waiters.clear();
 
     return new Promise<void>((resolve) => {
       const cleanup = () => {
@@ -204,8 +213,14 @@ export class Daemon {
           continue;
         }
 
-        const response = this.handleRequest(request);
-        conn.write(JSON.stringify(response) + "\n");
+        const result = this.handleRequest(request);
+        if (result instanceof Promise) {
+          result.then((response) => {
+            conn.write(JSON.stringify(response) + "\n");
+          });
+        } else {
+          conn.write(JSON.stringify(result) + "\n");
+        }
       }
     });
 
@@ -221,8 +236,10 @@ export class Daemon {
 
   /**
    * Route a request to the appropriate handler method.
+   * Handlers may return a Response synchronously or a Promise<Response> for
+   * commands that need to hold the connection open (e.g. wait).
    */
-  private handleRequest(request: Request): Response {
+  private handleRequest(request: Request): Response | Promise<Response> {
     const handler = this.handlers[request.command];
     if (!handler) {
       return {
@@ -234,13 +251,71 @@ export class Daemon {
   }
 
   /**
+   * Notify all waiters registered for a given agent name.
+   * Only resolves waiters when the agent is in a terminal status for wait
+   * purposes (stopped, failed, blocked).
+   * Called from the agent runner's onStatusChange callback.
+   */
+  notifyWaiters(name: string): void {
+    const agent = this.store.getAgent(name);
+    if (!agent) return;
+
+    // Only notify on terminal-for-wait statuses.
+    const terminalStatuses = ["stopped", "failed", "blocked"];
+    if (!terminalStatuses.includes(agent.status)) return;
+
+    const listeners = this.waiters.get(name);
+    if (!listeners || listeners.size === 0) return;
+
+    // Call all listeners and remove them.
+    for (const listener of listeners) {
+      listener(agent);
+    }
+    listeners.clear();
+  }
+
+  /**
+   * Handle a wait request. If the agent is already in a terminal status,
+   * responds immediately. Otherwise registers a listener that resolves
+   * when the agent reaches a terminal status.
+   */
+  private handleWait(args: Record<string, unknown>): Response | Promise<Response> {
+    const { name } = args as WaitArgs;
+
+    const agent = this.store.getAgent(name);
+    if (!agent) {
+      return { ok: false, error: `agent '${name}' not found` };
+    }
+
+    // Terminal statuses for wait: stopped, failed, created.
+    // Also blocked is terminal for wait purposes.
+    const terminalStatuses = ["stopped", "failed", "created", "blocked"];
+    if (terminalStatuses.includes(agent.status)) {
+      return { ok: true, data: agent as unknown as Record<string, unknown> };
+    }
+
+    // Agent is running — register a listener and return a promise.
+    return new Promise<Response>((resolve) => {
+      let listeners = this.waiters.get(name);
+      if (!listeners) {
+        listeners = new Set();
+        this.waiters.set(name, listeners);
+      }
+      listeners.add((updatedAgent: Agent) => {
+        resolve({ ok: true, data: updatedAgent as unknown as Record<string, unknown> });
+      });
+    });
+  }
+
+  /**
    * Map of command names to handler functions.
-   * Initially just 'ping'; more handlers will be added in later tasks.
+   * Handlers may return Response or Promise<Response>.
    */
   private handlers: Record<
     string,
-    (args: Record<string, unknown>) => Response
+    (args: Record<string, unknown>) => Response | Promise<Response>
   > = {
     ping: () => ({ ok: true }),
+    wait: (args) => this.handleWait(args),
   };
 }
