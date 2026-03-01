@@ -16,7 +16,7 @@ Every task must leave the codebase in a stable state with passing tests.
 
 ## Phase 1: Foundation
 
-### [ ] 1. Project scaffolding
+### [x] 1. Project scaffolding
 
 Set up the Go module, directory structure, Makefile, and development tooling.
 
