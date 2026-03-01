@@ -74,7 +74,7 @@ Define the core types used by store, daemon, client, and CLI.
 
 ## Phase 1: Foundation
 
-### [ ] 3. SQLite store
+### [x] 3. SQLite store
 
 Port the store from Go to TypeScript using `better-sqlite3`.
 
