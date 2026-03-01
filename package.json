@@ -1,0 +1,39 @@
+{
+  "name": "verandah",
+  "version": "0.2.0",
+  "description": "A CLI tool for managing Claude Code agent processes",
+  "type": "module",
+  "bin": {
+    "vh": "./bin/vh"
+  },
+  "scripts": {
+    "build": "make build",
+    "test": "npx vitest run",
+    "lint": "npx eslint src/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shishberg/verandah.git"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/shishberg/verandah/issues"
+  },
+  "homepage": "https://github.com/shishberg/verandah#readme",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.63",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.6.2",
+    "commander": "^14.0.3",
+    "ulid": "^3.0.2"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "esbuild": "^0.27.3",
+    "eslint": "^10.0.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,4 +1,4 @@
 bin/
+dist/
 .dev/
-go.work
-go.work.sum
+node_modules/

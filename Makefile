@@ -1,20 +1,32 @@
 .PHONY: build test integration-test lint check dev-env clean
 
 BINARY := bin/vh
+BUNDLE := dist/vh.js
 DEV_DIR := .dev
 VH_HOME := $(DEV_DIR)/vh
 
 build:
-	go build -o $(BINARY) ./cmd/vh/
+	npx esbuild src/cli/main.ts \
+		--bundle \
+		--platform=node \
+		--target=node22 \
+		--format=esm \
+		--outfile=$(BUNDLE) \
+		--external:better-sqlite3 \
+		--banner:js="import{createRequire}from'module';const require=createRequire(import.meta.url);"
+	@mkdir -p bin
+	@printf '#!/usr/bin/env node\n' > $(BINARY)
+	@cat $(BUNDLE) >> $(BINARY)
+	@chmod +x $(BINARY)
 
 test:
-	go test -short -count=1 ./...
+	npx vitest run
 
 integration-test:
-	go test -count=1 -timeout 120s ./...
+	npx vitest run --config vitest.integration.config.ts
 
 lint:
-	golangci-lint run ./...
+	npx eslint src/
 
 check: lint test build
 
@@ -25,4 +37,4 @@ dev-env: build
 	@echo "  ./$(BINARY) new --name test --prompt 'hello'"
 
 clean:
-	rm -rf bin/ $(DEV_DIR)
+	rm -rf bin/ $(DEV_DIR) dist/ node_modules/

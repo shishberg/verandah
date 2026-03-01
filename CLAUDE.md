@@ -8,17 +8,29 @@ A CLI tool for managing Claude Code agent processes. See [design](docs/design/01
 make check          # lint + test + build (run this after every change)
 make test           # unit tests only (fast)
 make integration-test  # all tests including integration
-make build          # build vh binary to ./bin/vh
-make lint           # golangci-lint
+make build          # esbuild bundle → bin/vh
+make lint           # eslint
 make dev-env        # set up isolated dev environment in .dev/
-make clean          # remove build artifacts and .dev/
+make clean          # remove build artifacts, node_modules, and .dev/
 ```
 
 ## Project structure
 
 ```
-cmd/vh/             # CLI + daemon entry point (cobra)
-internal/           # All internal packages
+src/
+  cli/              # CLI entry point and commands
+    main.ts         # Entry point, command routing
+    commands/       # One file per command
+  daemon/           # Daemon process
+    daemon.ts       # Unix socket server
+    handlers.ts     # Command handlers
+    agent-runner.ts # Agent SDK lifecycle
+  lib/              # Shared library code
+    store.ts        # SQLite persistence
+    client.ts       # Daemon client
+    names.ts        # Name generation
+    types.ts        # Shared types
+    config.ts       # Config/path helpers
 docs/
   design/           # Design documents (the "why")
   spec/             # Specifications (the "what", precisely)
@@ -30,20 +42,21 @@ docs/
 vh is a CLI client that talks to a daemon (`vhd`) over a unix socket. The daemon manages all agent state (SQLite) and child processes. See the [design doc](docs/design/01_Verandah.md) for details.
 
 Key files:
-- `internal/store.go` — SQLite persistence
-- `internal/daemon.go` — unix socket server
-- `internal/client.go` — CLI-side daemon client
-- `internal/claude.go` — claude CLI command building and output parsing
-- `internal/process.go` — child process management
-- `internal/names.go` — random name generation
+- `src/lib/store.ts` — SQLite persistence (better-sqlite3)
+- `src/daemon/daemon.ts` — unix socket server
+- `src/lib/client.ts` — CLI-side daemon client
+- `src/daemon/agent-runner.ts` — Agent SDK lifecycle management
+- `src/lib/names.ts` — random name generation
+- `src/lib/types.ts` — shared TypeScript types
 
 ## Development conventions
 
-- **Go style**: standard `gofmt`, no extra linting rules beyond golangci-lint defaults
-- **Tests**: use `t.TempDir()` for isolated `VH_HOME` per test. Use `t.Short()` to skip integration tests. Integration tests spin up a real daemon with a mock claude binary.
-- **Mock claude**: tests use `llmock` (github.com/shishberg/llmock) in CLI mode as a mock `claude` binary. Build it and put it on `PATH` in test setup. The mock must emit `stream-json` format (newline-delimited JSON events with `type` field, `session_id` in system events).
-- **Errors**: return errors, don't panic. Wrap with `fmt.Errorf("context: %w", err)`.
+- **TypeScript**: strict mode, ESM throughout, target Node 22+
+- **Style**: eslint with @typescript-eslint, no extra rules beyond defaults
+- **Tests**: use vitest. Use `tmpdir` for isolated `VH_HOME` per test. Integration tests use `*.integration.test.ts` suffix and are excluded from `make test`.
+- **Errors**: throw typed errors, use try/catch. No unhandled promise rejections.
 - **No dead code**: every task in the plan leaves the codebase stable with passing tests. Don't implement things that aren't wired up yet.
+- **Build**: esbuild bundles `src/cli/main.ts` into `dist/vh.js`, then `bin/vh` is a `#!/usr/bin/env node` wrapper around it.
 
 ## Implementation plans
 
@@ -56,7 +69,7 @@ When completing a task: mark it `[x]`, commit the plan update and implementation
 
 ## Manual testing
 
-When testing interactively against real Claude (not llmock), always use `--model haiku` to avoid burning token credits.
+When testing interactively against real Claude (not mocks), always use `--model haiku` to avoid burning token credits.
 
 ## Dev environment
 

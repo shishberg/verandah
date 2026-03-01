@@ -31,7 +31,7 @@ Open the plan file under `docs/plan` at `$ARGUMENTS`.
 - No dead code. Don't implement things that won't be wired up until a later task.
 - No parallel implementations with a big tie-in at the end. Each task replaces or extends, it doesn't accumulate.
 - Tests go with the code they test, not in a separate task.
-- Use `t.TempDir()` and `os.Setenv("VH_HOME", ...)` for test isolation.
-- Use `if testing.Short() { t.Skip("integration test") }` to gate integration tests.
-- The mock claude binary comes from `llmock` (`github.com/shishberg/llmock`). Build it in test setup and put it on PATH.
+- Use vitest for all tests. Unit tests use `*.test.ts`, integration tests use `*.integration.test.ts`.
+- Use `tmpdir` or `fs.mkdtempSync` and set `VH_HOME` env var for test isolation.
+- Integration tests are excluded from `make test` but included in `make integration-test`.
 - Run `make check` as the fix loop target. Do not move on until it passes.
