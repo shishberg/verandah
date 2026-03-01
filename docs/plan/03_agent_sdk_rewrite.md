@@ -325,7 +325,7 @@ First end-to-end commands.
 
 ## Phase 5: Polish
 
-### [ ] 17. End-to-end smoke test
+### [x] 17. End-to-end smoke test
 
 A single integration test exercising the full workflow with mocked SDK:
 
