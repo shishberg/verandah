@@ -561,7 +561,3 @@ func TestSchemaVersion_FutureVersion(t *testing.T) {
 	}
 }
 
-// ptrTo returns a pointer to the given value.
-func ptrTo[T any](v T) *T {
-	return &v
-}

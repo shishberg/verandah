@@ -109,7 +109,7 @@ Spawn and manage child processes.
 
 ## Phase 2: Daemon
 
-### [ ] 7. Daemon core
+### [x] 7. Daemon core
 
 Unix socket server with startup, shutdown, and protocol handling.
 
