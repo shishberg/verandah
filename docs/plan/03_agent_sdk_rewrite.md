@@ -55,7 +55,7 @@ Remove all Go source code and set up the TypeScript project from scratch.
 - vitest configured with `passWithNoTests: true` so `make test` passes before any test files exist
 - ESLint uses flat config format (`eslint.config.mjs`) with @typescript-eslint v8+
 
-### [ ] 2. Types and shared utilities
+### [x] 2. Types and shared utilities
 
 Define the core types used by store, daemon, client, and CLI.
 
