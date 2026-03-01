@@ -102,6 +102,22 @@ func (c *Client) List(status string) ([]Agent, error) {
 	return decodeAgents(resp.Data)
 }
 
+// SendMessage sends a "send" request to the daemon and returns the updated agent.
+func (c *Client) SendMessage(name, message string) (Agent, error) {
+	args := SendArgs{Name: name, Message: message}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return Agent{}, fmt.Errorf("marshal send args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "send", Args: argsJSON})
+	if err != nil {
+		return Agent{}, err
+	}
+
+	return decodeAgent(resp.Data)
+}
+
 // decodeAgent decodes a response data value into an Agent.
 func decodeAgent(data any) (Agent, error) {
 	raw, err := json.Marshal(data)

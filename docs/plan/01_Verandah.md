@@ -165,7 +165,7 @@ First end-to-end commands.
   - Name collision error
   - Stdin prompt (`--prompt -`)
 
-### [ ] 10. `vh send`
+### [x] 10. `vh send`
 
 - `cmd/vh/send.go`: `vh send <name> <message>` (or `-` for stdin)
 - Daemon handler: `handleSend`

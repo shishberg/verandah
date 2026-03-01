@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sync"
@@ -32,6 +33,12 @@ type NewArgs struct {
 // ListArgs holds the arguments for the "list" command.
 type ListArgs struct {
 	Status string `json:"status"`
+}
+
+// SendArgs holds the arguments for the "send" command.
+type SendArgs struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
 }
 
 // Request represents a JSON request from a client.
@@ -291,6 +298,8 @@ func (d *Daemon) route(req Request) Response {
 		return d.handleNew(req.Args)
 	case "list":
 		return d.handleList(req.Args)
+	case "send":
+		return d.handleSend(req.Args)
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %q", req.Command)}
 	}
@@ -513,6 +522,74 @@ func (d *Daemon) handleList(rawArgs json.RawMessage) Response {
 	}
 
 	return Response{OK: true, Data: agents}
+}
+
+func (d *Daemon) handleSend(rawArgs json.RawMessage) Response {
+	var args SendArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid send args: %v", err)}
+	}
+
+	// Look up the agent.
+	agent, err := d.store.GetAgent(args.Name)
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' not found", args.Name)}
+	}
+
+	// Reject if running.
+	if agent.Status == "running" {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' is running. Stop it first with 'vh stop %s' or wait for it to finish.", args.Name, args.Name)}
+	}
+
+	var cmd *exec.Cmd
+	logPath := filepath.Join(d.vhHome, "logs", agent.Name+".log")
+
+	switch agent.Status {
+	case "created":
+		// First message: spawn with the message as the prompt.
+		spawnAgent := agent
+		spawnAgent.Prompt = &args.Message
+		cmd = d.claudeCfg.BuildSpawnCommand(spawnAgent)
+	case "stopped", "failed":
+		// Resume the existing session.
+		cmd = d.claudeCfg.BuildResumeCommand(agent, args.Message)
+	default:
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' has unexpected status '%s'", args.Name, agent.Status)}
+	}
+
+	pid, err := d.procMgr.Start(cmd, logPath)
+	if err != nil {
+		failed := "failed"
+		now := time.Now()
+		_ = d.store.UpdateAgent(args.Name, AgentUpdate{
+			Status:    &failed,
+			StoppedAt: ptrTo(&now),
+		})
+		return Response{OK: false, Error: fmt.Sprintf("start process: %v", err)}
+	}
+
+	// Update agent: PID, status='running', clear stopped_at.
+	running := "running"
+	var noTime *time.Time
+	if err := d.store.UpdateAgent(args.Name, AgentUpdate{
+		PID:       ptrTo(&pid),
+		Status:    &running,
+		StoppedAt: &noTime,
+	}); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("update agent: %v", err)}
+	}
+	agent.PID = &pid
+	agent.Status = "running"
+	agent.StoppedAt = nil
+
+	// Background goroutine to extract session_id and wait for exit.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.watchAgent(args.Name, pid, logPath)
+	}()
+
+	return Response{OK: true, Data: agent}
 }
 
 // reconcile checks all agents with status='running' and updates any with
