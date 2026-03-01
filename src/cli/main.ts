@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { registerDaemonCommand } from "./commands/daemon.js";
 import { registerNewCommand } from "./commands/new.js";
 import { registerLsCommand } from "./commands/ls.js";
@@ -17,6 +17,15 @@ program
   .description("Manage Claude Code agent processes")
   .version("0.2.0");
 
+// Suppress Commander's own error output — our action handlers write errors
+// themselves. Without this, errors can appear twice: once from the handler's
+// catch block and once from Commander's default outputError.
+program.configureOutput({ writeErr: () => {} });
+
+// Throw CommanderError instead of calling process.exit() so we can handle
+// Commander-level errors (missing args, unknown options) uniformly below.
+program.exitOverride();
+
 registerDaemonCommand(program);
 registerNewCommand(program);
 registerLsCommand(program);
@@ -28,4 +37,22 @@ registerWhoamiCommand(program);
 registerWaitCommand(program);
 registerPermissionCommand(program);
 
-program.parse(process.argv);
+// Use parseAsync so the process properly awaits async action handlers,
+// preventing unhandled promise rejections.
+program.parseAsync(process.argv).catch((err: unknown) => {
+  if (err instanceof CommanderError) {
+    // Commander-level errors (missing args, unknown options, --help, --version).
+    // --help and --version use exitCode 0; don't treat those as errors.
+    if (err.exitCode !== 0) {
+      // Commander messages already include "error: " prefix.
+      process.stderr.write(`${err.message}\n`);
+    }
+    process.exitCode = err.exitCode;
+  } else {
+    // Unexpected error from an action handler that escaped its own catch block.
+    process.stderr.write(
+      `error: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    process.exitCode = 1;
+  }
+});
