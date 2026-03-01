@@ -129,7 +129,7 @@ Set it in the agent runner when a result message has `is_error: true`
 Update `Agent` type, `UpdateAgentFields`, `rowToAgent`, and store
 methods. Update existing tests.
 
-### [ ] 4. Show errors in `vh ls`
+### [x] 4. Show errors in `vh ls`
 
 When `lastError` is non-null, append it to the STATUS column in
 parentheses: `failed (error_max_turns)`. Keep the table compact — if

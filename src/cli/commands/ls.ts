@@ -56,7 +56,7 @@ function printTable(agents: Agent[]): void {
   // Build rows.
   const rows: string[][] = agents.map((agent) => [
     agent.name,
-    agent.status,
+    formatStatus(agent),
     agent.model ?? "-",
     agent.cwd,
     formatUptime(agent),
@@ -84,6 +84,25 @@ function printTable(agents: Agent[]): void {
       .join("  ");
     console.log(line);
   }
+}
+
+/** Maximum length for the error string displayed in the STATUS column. */
+const MAX_ERROR_LENGTH = 30;
+
+/**
+ * Format the STATUS column for an agent.
+ * When `lastError` is set, appends it in parentheses: `failed (error_max_turns)`.
+ * Truncates the error string to MAX_ERROR_LENGTH chars with `…` if needed.
+ */
+function formatStatus(agent: Agent): string {
+  if (agent.lastError == null) {
+    return agent.status;
+  }
+  const error =
+    agent.lastError.length > MAX_ERROR_LENGTH
+      ? agent.lastError.slice(0, MAX_ERROR_LENGTH) + "\u2026"
+      : agent.lastError;
+  return `${agent.status} (${error})`;
 }
 
 /**
