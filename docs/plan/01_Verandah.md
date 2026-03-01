@@ -204,7 +204,7 @@ First end-to-end commands.
 
 ## Phase 4: Polish
 
-### [ ] 13. `vh new --interactive`
+### [x] 13. `vh new --interactive`
 
 - CLI owns the process (TTY attached), daemon tracks it
 - CLI notifies daemon of PID on start, status on exit

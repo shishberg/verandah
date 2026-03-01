@@ -59,6 +59,30 @@ type StopAllResult struct {
 	Message string  `json:"message"`
 }
 
+// NotifyStartArgs holds the arguments for the "notify-start" command.
+// The CLI sends this after starting an interactive process.
+type NotifyStartArgs struct {
+	Name string `json:"name"`
+	PID  int    `json:"pid"`
+}
+
+// NotifyExitArgs holds the arguments for the "notify-exit" command.
+// The CLI sends this when an interactive process exits.
+type NotifyExitArgs struct {
+	Name     string `json:"name"`
+	ExitCode int    `json:"exit_code"`
+}
+
+// InteractiveResult holds the result of creating an interactive agent.
+// It includes the agent record and the command the CLI should run.
+type InteractiveResult struct {
+	Agent   Agent    `json:"agent"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+	Env     []string `json:"env"`
+	Dir     string   `json:"dir"`
+}
+
 // LogsArgs holds the arguments for the "logs" command.
 type LogsArgs struct {
 	Name string `json:"name"`
@@ -335,6 +359,10 @@ func (d *Daemon) route(req Request) Response {
 		return d.handleRemove(req.Args)
 	case "logs":
 		return d.handleLogs(req.Args)
+	case "notify-start":
+		return d.handleNotifyStart(req.Args)
+	case "notify-exit":
+		return d.handleNotifyExit(req.Args)
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %q", req.Command)}
 	}
@@ -390,6 +418,32 @@ func (d *Daemon) handleNew(rawArgs json.RawMessage) Response {
 		MaxTurns:       args.MaxTurns,
 		AllowedTools:   args.AllowedTools,
 		CreatedAt:      time.Now(),
+	}
+
+	if args.Interactive {
+		// Interactive mode: create agent with session_id, return command info.
+		sessionID := generateID()
+		agent.SessionID = &sessionID
+		agent.Status = "created"
+		if err := d.store.CreateAgent(agent); err != nil {
+			return Response{OK: false, Error: fmt.Sprintf("create agent: %v", err)}
+		}
+
+		cmd := d.claudeCfg.BuildInteractiveCommand(agent)
+		result := InteractiveResult{
+			Agent:   agent,
+			Command: cmd.Path,
+			Args:    cmd.Args[1:], // skip the binary name
+			Env:     cmd.Env,
+			Dir:     cmd.Dir,
+		}
+		// Resolve the command path if it's just a name.
+		if result.Command == "claude" {
+			if resolved, err := exec.LookPath("claude"); err == nil {
+				result.Command = resolved
+			}
+		}
+		return Response{OK: true, Data: result}
 	}
 
 	if args.Prompt == nil {
@@ -751,6 +805,64 @@ func (d *Daemon) handleLogs(rawArgs json.RawMessage) Response {
 
 	logPath := filepath.Join(d.vhHome, "logs", args.Name+".log")
 	return Response{OK: true, Data: map[string]string{"log_path": logPath}}
+}
+
+func (d *Daemon) handleNotifyStart(rawArgs json.RawMessage) Response {
+	var args NotifyStartArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid notify-start args: %v", err)}
+	}
+
+	agent, err := d.store.GetAgent(args.Name)
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' not found", args.Name)}
+	}
+
+	running := "running"
+	var noTime *time.Time
+	if err := d.store.UpdateAgent(args.Name, AgentUpdate{
+		PID:       ptrTo(&args.PID),
+		Status:    &running,
+		StoppedAt: &noTime,
+	}); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("update agent: %v", err)}
+	}
+	agent.PID = &args.PID
+	agent.Status = "running"
+	agent.StoppedAt = nil
+
+	return Response{OK: true, Data: agent}
+}
+
+func (d *Daemon) handleNotifyExit(rawArgs json.RawMessage) Response {
+	var args NotifyExitArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid notify-exit args: %v", err)}
+	}
+
+	agent, err := d.store.GetAgent(args.Name)
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' not found", args.Name)}
+	}
+
+	now := time.Now()
+	status := "stopped"
+	if args.ExitCode != 0 {
+		status = "failed"
+	}
+	var noPID *int
+	if err := d.store.UpdateAgent(args.Name, AgentUpdate{
+		Status:    &status,
+		StoppedAt: ptrTo(&now),
+		PID:       &noPID,
+	}); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("update agent: %v", err)}
+	}
+	agent.Status = status
+	agent.StoppedAt = &now
+	agent.PID = nil
+
+	return Response{OK: true, Data: agent}
 }
 
 // reconcile checks all agents with status='running' and updates any with

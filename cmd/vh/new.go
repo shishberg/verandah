@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/shishberg/verandah/internal"
@@ -35,7 +36,7 @@ func init() {
 	newCmd.Flags().StringVar(&newPermissionMode, "permission-mode", "", "permission mode")
 	newCmd.Flags().IntVar(&newMaxTurns, "max-turns", 0, "max agentic turns")
 	newCmd.Flags().StringVar(&newAllowedTools, "allowed-tools", "", "allowed tools")
-	newCmd.Flags().BoolVar(&newInteractive, "interactive", false, "attach TTY for interactive use (stub)")
+	newCmd.Flags().BoolVar(&newInteractive, "interactive", false, "attach TTY for interactive use")
 
 	rootCmd.AddCommand(newCmd)
 }
@@ -92,6 +93,10 @@ func runNew(cmd *cobra.Command, _ []string) error {
 		args.AllowedTools = &newAllowedTools
 	}
 
+	if args.Interactive {
+		return runNewInteractive(client, args)
+	}
+
 	agent, err := client.New(args)
 	if err != nil {
 		return err
@@ -103,5 +108,55 @@ func runNew(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(os.Stdout, "created agent '%s'\n", agent.Name)
 	}
 
+	return nil
+}
+
+func runNewInteractive(client *internal.Client, args internal.NewArgs) error {
+	result, err := client.NewInteractive(args)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "starting interactive session for agent '%s'\n", result.Agent.Name)
+
+	// Build the command from the daemon's response.
+	cmd := exec.Command(result.Command, result.Args...)
+	cmd.Dir = result.Dir
+	cmd.Env = result.Env
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		// Notify daemon of failure.
+		_ = client.NotifyExit(result.Agent.Name, 1)
+		return fmt.Errorf("start interactive process: %w", err)
+	}
+
+	// Notify daemon of the PID.
+	if err := client.NotifyStart(result.Agent.Name, cmd.Process.Pid); err != nil {
+		// Best effort: kill the process if we can't notify.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return fmt.Errorf("notify daemon of start: %w", err)
+	}
+
+	// Wait for the process to exit.
+	waitErr := cmd.Wait()
+	exitCode := 0
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+
+	// Notify daemon of exit.
+	_ = client.NotifyExit(result.Agent.Name, exitCode)
+
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 	return nil
 }

@@ -86,6 +86,47 @@ func (c *Client) New(args NewArgs) (Agent, error) {
 	return decodeAgent(resp.Data)
 }
 
+// NewInteractive sends a "new" request with interactive=true and returns
+// the InteractiveResult containing the agent and command info.
+func (c *Client) NewInteractive(args NewArgs) (InteractiveResult, error) {
+	args.Interactive = true
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return InteractiveResult{}, fmt.Errorf("marshal new args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "new", Args: argsJSON})
+	if err != nil {
+		return InteractiveResult{}, err
+	}
+
+	return decodeInteractiveResult(resp.Data)
+}
+
+// NotifyStart tells the daemon that an interactive process has started.
+func (c *Client) NotifyStart(name string, pid int) error {
+	args := NotifyStartArgs{Name: name, PID: pid}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Errorf("marshal notify-start args: %w", err)
+	}
+
+	_, err = c.Send(Request{Command: "notify-start", Args: argsJSON})
+	return err
+}
+
+// NotifyExit tells the daemon that an interactive process has exited.
+func (c *Client) NotifyExit(name string, exitCode int) error {
+	args := NotifyExitArgs{Name: name, ExitCode: exitCode}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Errorf("marshal notify-exit args: %w", err)
+	}
+
+	_, err = c.Send(Request{Command: "notify-exit", Args: argsJSON})
+	return err
+}
+
 // List sends a "list" request to the daemon and returns the agents.
 func (c *Client) List(status string) ([]Agent, error) {
 	args := ListArgs{Status: status}
@@ -226,6 +267,19 @@ func decodeStopAllResult(data any) (StopAllResult, error) {
 	var result StopAllResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return StopAllResult{}, fmt.Errorf("unmarshal stop all result: %w", err)
+	}
+	return result, nil
+}
+
+// decodeInteractiveResult decodes a response data value into an InteractiveResult.
+func decodeInteractiveResult(data any) (InteractiveResult, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return InteractiveResult{}, fmt.Errorf("re-marshal interactive result data: %w", err)
+	}
+	var result InteractiveResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return InteractiveResult{}, fmt.Errorf("unmarshal interactive result: %w", err)
 	}
 	return result, nil
 }
