@@ -155,7 +155,7 @@ failure, missing CLI) without blocking on long-running agents.
 
 ## Phase 3: Wait feedback
 
-### [ ] 6. `vh wait` progress updates
+### [x] 6. `vh wait` progress updates
 
 While waiting, periodically (every 5s) print a status line to stderr:
 
