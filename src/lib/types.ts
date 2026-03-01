@@ -94,6 +94,10 @@ export type WhoamiArgs = {
   name: string;
 };
 
+export type ListArgs = {
+  status?: AgentStatus;
+};
+
 export type WaitArgs = {
   name: string;
   timeout?: number;

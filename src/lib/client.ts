@@ -2,7 +2,7 @@ import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import type { Request, Response } from "./types.js";
+import type { Request, Response, NewArgs, Agent, AgentStatus } from "./types.js";
 
 export type ClientOptions = {
   /** Path to the daemon entry script (dist/daemon.js). Required for auto-start. */
@@ -75,6 +75,51 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "ping failed");
     }
+  }
+
+  /**
+   * Create a new agent. Returns the agent data or throws on error.
+   */
+  async newAgent(args: NewArgs): Promise<Agent> {
+    const response = await this.send({
+      command: "new",
+      args: args as unknown as Record<string, unknown>,
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "new agent failed");
+    }
+    return response.data as unknown as Agent;
+  }
+
+  /**
+   * List agents, optionally filtered by status.
+   */
+  async list(statusFilter?: AgentStatus): Promise<Agent[]> {
+    const args: Record<string, unknown> = {};
+    if (statusFilter) {
+      args.status = statusFilter;
+    }
+    const response = await this.send({ command: "list", args });
+    if (!response.ok) {
+      throw new Error(response.error ?? "list failed");
+    }
+    const data = response.data as unknown as { agents: Agent[] };
+    return data.agents;
+  }
+
+  /**
+   * Wait for an agent to reach a terminal status (stopped, failed, blocked).
+   * Returns the agent data when it reaches a terminal state.
+   */
+  async wait(name: string): Promise<Agent> {
+    const response = await this.send({
+      command: "wait",
+      args: { name },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "wait failed");
+    }
+    return response.data as unknown as Agent;
   }
 
   /**

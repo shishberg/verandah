@@ -184,7 +184,7 @@ The daemon-side wait mechanism, used by `vh wait`, `vh new --wait`, `vh send --w
 
 ## Phase 3: Commands
 
-### [ ] 9. `vh new` + `vh ls`
+### [x] 9. `vh new` + `vh ls`
 
 First end-to-end commands.
 
