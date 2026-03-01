@@ -178,7 +178,7 @@ First end-to-end commands.
   - Send to running agent fails
   - Stdin message works
 
-### [ ] 11. `vh stop` + `vh rm`
+### [x] 11. `vh stop` + `vh rm`
 
 - `cmd/vh/stop.go`: `vh stop <name>`, `vh stop --all`
 - `cmd/vh/rm.go`: `vh rm <name>`, `vh rm --force <name>`

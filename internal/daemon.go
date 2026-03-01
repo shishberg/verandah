@@ -41,6 +41,30 @@ type SendArgs struct {
 	Message string `json:"message"`
 }
 
+// StopArgs holds the arguments for the "stop" command.
+type StopArgs struct {
+	Name string `json:"name"`
+	All  bool   `json:"all"`
+}
+
+// StopResult holds the result of stopping a single agent.
+type StopResult struct {
+	Agent   Agent  `json:"agent"`
+	Message string `json:"message"`
+}
+
+// StopAllResult holds the result of stopping all agents.
+type StopAllResult struct {
+	Agents  []Agent `json:"agents"`
+	Message string  `json:"message"`
+}
+
+// RemoveArgs holds the arguments for the "rm" command.
+type RemoveArgs struct {
+	Name  string `json:"name"`
+	Force bool   `json:"force"`
+}
+
 // Request represents a JSON request from a client.
 type Request struct {
 	Command string          `json:"command"`
@@ -300,6 +324,10 @@ func (d *Daemon) route(req Request) Response {
 		return d.handleList(req.Args)
 	case "send":
 		return d.handleSend(req.Args)
+	case "stop":
+		return d.handleStop(req.Args)
+	case "rm":
+		return d.handleRemove(req.Args)
 	default:
 		return Response{OK: false, Error: fmt.Sprintf("unknown command: %q", req.Command)}
 	}
@@ -588,6 +616,117 @@ func (d *Daemon) handleSend(rawArgs json.RawMessage) Response {
 		defer d.wg.Done()
 		d.watchAgent(args.Name, pid, logPath)
 	}()
+
+	return Response{OK: true, Data: agent}
+}
+
+func (d *Daemon) handleStop(rawArgs json.RawMessage) Response {
+	var args StopArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid stop args: %v", err)}
+	}
+
+	if args.All {
+		return d.handleStopAll()
+	}
+
+	return d.handleStopSingle(args.Name)
+}
+
+func (d *Daemon) handleStopSingle(name string) Response {
+	agent, err := d.store.GetAgent(name)
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' not found", name)}
+	}
+
+	if agent.Status != "running" {
+		return Response{OK: true, Data: StopResult{
+			Agent:   agent,
+			Message: fmt.Sprintf("agent '%s' is not running", name),
+		}}
+	}
+
+	d.stopAgent(&agent)
+
+	return Response{OK: true, Data: StopResult{
+		Agent:   agent,
+		Message: fmt.Sprintf("stopped agent '%s'", name),
+	}}
+}
+
+func (d *Daemon) handleStopAll() Response {
+	agents, err := d.store.ListAgents(StatusFilter("running"))
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("list running agents: %v", err)}
+	}
+
+	if len(agents) == 0 {
+		return Response{OK: true, Data: StopAllResult{
+			Agents:  []Agent{},
+			Message: "no running agents",
+		}}
+	}
+
+	for i := range agents {
+		d.stopAgent(&agents[i])
+	}
+
+	return Response{OK: true, Data: StopAllResult{
+		Agents:  agents,
+		Message: fmt.Sprintf("stopped %d agents", len(agents)),
+	}}
+}
+
+// stopAgent stops a running agent process and updates its status.
+// It modifies the agent in place to reflect the new state.
+func (d *Daemon) stopAgent(agent *Agent) {
+	if agent.PID != nil {
+		if stopErr := d.procMgr.Stop(*agent.PID, 5*time.Second); stopErr != nil {
+			log.Printf("stop agent %q (pid %d): %v", agent.Name, *agent.PID, stopErr)
+		}
+	}
+
+	now := time.Now()
+	stopped := "stopped"
+	if err := d.store.UpdateAgent(agent.Name, AgentUpdate{
+		Status:    &stopped,
+		StoppedAt: ptrTo(&now),
+	}); err != nil {
+		log.Printf("update agent %q after stop: %v", agent.Name, err)
+	}
+	agent.Status = "stopped"
+	agent.StoppedAt = &now
+	agent.PID = nil
+}
+
+func (d *Daemon) handleRemove(rawArgs json.RawMessage) Response {
+	var args RemoveArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid rm args: %v", err)}
+	}
+
+	agent, err := d.store.GetAgent(args.Name)
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' not found", args.Name)}
+	}
+
+	if agent.Status == "running" {
+		if !args.Force {
+			return Response{OK: false, Error: fmt.Sprintf("agent '%s' is running. Use --force to stop and remove.", args.Name)}
+		}
+		d.stopAgent(&agent)
+	}
+
+	// Delete agent record.
+	if err := d.store.DeleteAgent(args.Name); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("delete agent: %v", err)}
+	}
+
+	// Delete log file if it exists.
+	logPath := filepath.Join(d.vhHome, "logs", args.Name+".log")
+	if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("remove log file for %q: %v", args.Name, err)
+	}
 
 	return Response{OK: true, Data: agent}
 }

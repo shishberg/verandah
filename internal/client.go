@@ -118,6 +118,50 @@ func (c *Client) SendMessage(name, message string) (Agent, error) {
 	return decodeAgent(resp.Data)
 }
 
+// Stop sends a "stop" request for a single agent and returns the result.
+func (c *Client) Stop(name string) (StopResult, error) {
+	args := StopArgs{Name: name}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return StopResult{}, fmt.Errorf("marshal stop args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "stop", Args: argsJSON})
+	if err != nil {
+		return StopResult{}, err
+	}
+
+	return decodeStopResult(resp.Data)
+}
+
+// StopAll sends a "stop" request for all running agents and returns the result.
+func (c *Client) StopAll() (StopAllResult, error) {
+	args := StopArgs{All: true}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return StopAllResult{}, fmt.Errorf("marshal stop args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "stop", Args: argsJSON})
+	if err != nil {
+		return StopAllResult{}, err
+	}
+
+	return decodeStopAllResult(resp.Data)
+}
+
+// Remove sends an "rm" request to the daemon.
+func (c *Client) Remove(name string, force bool) error {
+	args := RemoveArgs{Name: name, Force: force}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Errorf("marshal rm args: %w", err)
+	}
+
+	_, err = c.Send(Request{Command: "rm", Args: argsJSON})
+	return err
+}
+
 // decodeAgent decodes a response data value into an Agent.
 func decodeAgent(data any) (Agent, error) {
 	raw, err := json.Marshal(data)
@@ -142,6 +186,32 @@ func decodeAgents(data any) ([]Agent, error) {
 		return nil, fmt.Errorf("unmarshal agents: %w", err)
 	}
 	return agents, nil
+}
+
+// decodeStopResult decodes a response data value into a StopResult.
+func decodeStopResult(data any) (StopResult, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return StopResult{}, fmt.Errorf("re-marshal stop result data: %w", err)
+	}
+	var result StopResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return StopResult{}, fmt.Errorf("unmarshal stop result: %w", err)
+	}
+	return result, nil
+}
+
+// decodeStopAllResult decodes a response data value into a StopAllResult.
+func decodeStopAllResult(data any) (StopAllResult, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return StopAllResult{}, fmt.Errorf("re-marshal stop all result data: %w", err)
+	}
+	var result StopAllResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return StopAllResult{}, fmt.Errorf("unmarshal stop all result: %w", err)
+	}
+	return result, nil
 }
 
 // sendOnce sends a single request on a new connection and returns the response.
