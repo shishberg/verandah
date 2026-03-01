@@ -33,7 +33,7 @@ Set up the Go module, directory structure, Makefile, and development tooling.
 - Stub `cmd/vh/main.go` with cobra root command
 - Verify `make check` passes
 
-### [ ] 2. SQLite store
+### [x] 2. SQLite store
 
 Implement the store layer: schema creation, migrations, and CRUD operations for agents.
 
