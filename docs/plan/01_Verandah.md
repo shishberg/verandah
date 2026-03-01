@@ -213,7 +213,7 @@ First end-to-end commands.
   - `vh stop` from another connection kills it
   - Status updates on exit
 
-### [ ] 14. End-to-end smoke test
+### [x] 14. End-to-end smoke test
 
 - A single integration test that exercises the full workflow:
   - Auto-starts daemon
