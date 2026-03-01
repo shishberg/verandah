@@ -91,7 +91,7 @@ Port the store from Go to TypeScript using `better-sqlite3`.
   - Status filter on list
   - Update partial fields
 
-### [ ] 4. Name generator
+### [x] 4. Name generator
 
 Port the Australian-biased adjective-noun generator.
 
