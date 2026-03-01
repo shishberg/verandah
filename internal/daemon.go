@@ -83,6 +83,11 @@ type InteractiveResult struct {
 	Dir     string   `json:"dir"`
 }
 
+// WhoamiArgs holds the arguments for the "whoami" command.
+type WhoamiArgs struct {
+	Name string `json:"name"`
+}
+
 // LogsArgs holds the arguments for the "logs" command.
 type LogsArgs struct {
 	Name string `json:"name"`
@@ -359,6 +364,8 @@ func (d *Daemon) route(req Request) Response {
 		return d.handleRemove(req.Args)
 	case "logs":
 		return d.handleLogs(req.Args)
+	case "whoami":
+		return d.handleWhoami(req.Args)
 	case "notify-start":
 		return d.handleNotifyStart(req.Args)
 	case "notify-exit":
@@ -805,6 +812,20 @@ func (d *Daemon) handleLogs(rawArgs json.RawMessage) Response {
 
 	logPath := filepath.Join(d.vhHome, "logs", args.Name+".log")
 	return Response{OK: true, Data: map[string]string{"log_path": logPath}}
+}
+
+func (d *Daemon) handleWhoami(rawArgs json.RawMessage) Response {
+	var args WhoamiArgs
+	if err := json.Unmarshal(rawArgs, &args); err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("invalid whoami args: %v", err)}
+	}
+
+	agent, err := d.store.GetAgent(args.Name)
+	if err != nil {
+		return Response{OK: false, Error: fmt.Sprintf("agent '%s' not found", args.Name)}
+	}
+
+	return Response{OK: true, Data: agent}
 }
 
 func (d *Daemon) handleNotifyStart(rawArgs json.RawMessage) Response {

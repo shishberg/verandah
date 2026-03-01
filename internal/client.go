@@ -207,6 +207,22 @@ func (c *Client) LogPath(name string) (string, error) {
 	return decodeLogPath(resp.Data)
 }
 
+// Whoami sends a "whoami" request to the daemon and returns the agent record.
+func (c *Client) Whoami(name string) (Agent, error) {
+	args := WhoamiArgs{Name: name}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return Agent{}, fmt.Errorf("marshal whoami args: %w", err)
+	}
+
+	resp, err := c.Send(Request{Command: "whoami", Args: argsJSON})
+	if err != nil {
+		return Agent{}, err
+	}
+
+	return decodeAgent(resp.Data)
+}
+
 // Remove sends an "rm" request to the daemon.
 func (c *Client) Remove(name string, force bool) error {
 	args := RemoveArgs{Name: name, Force: force}

@@ -36,7 +36,7 @@ func (c *ClaudeConfig) BuildSpawnCommand(agent Agent) *exec.Cmd {
 
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = agent.CWD
-	cmd.Env = c.buildEnv()
+	cmd.Env = c.buildEnv(agent.Name)
 	return cmd
 }
 
@@ -58,7 +58,7 @@ func (c *ClaudeConfig) BuildResumeCommand(agent Agent, message string) *exec.Cmd
 
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = agent.CWD
-	cmd.Env = c.buildEnv()
+	cmd.Env = c.buildEnv(agent.Name)
 	return cmd
 }
 
@@ -74,13 +74,13 @@ func (c *ClaudeConfig) BuildInteractiveCommand(agent Agent) *exec.Cmd {
 
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = agent.CWD
-	cmd.Env = c.buildEnv()
+	cmd.Env = c.buildEnv(agent.Name)
 	return cmd
 }
 
-// buildEnv returns the current environment with CLAUDE_CONFIG_DIR set to VH_HOME/.claude/.
+// buildEnv returns the current environment with CLAUDE_CONFIG_DIR and VH_AGENT_NAME set.
 // It removes CLAUDECODE so spawned agents aren't rejected as nested sessions.
-func (c *ClaudeConfig) buildEnv() []string {
+func (c *ClaudeConfig) buildEnv(agentName string) []string {
 	configDir := filepath.Join(c.VHHome, ".claude")
 	var env []string
 	for _, e := range os.Environ() {
@@ -90,6 +90,9 @@ func (c *ClaudeConfig) buildEnv() []string {
 		env = append(env, e)
 	}
 	env = append(env, fmt.Sprintf("CLAUDE_CONFIG_DIR=%s", configDir))
+	if agentName != "" {
+		env = append(env, fmt.Sprintf("VH_AGENT_NAME=%s", agentName))
+	}
 	return env
 }
 
