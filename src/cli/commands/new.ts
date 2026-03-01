@@ -96,6 +96,16 @@ export function registerNewCommand(program: Command): void {
         if (opts.wait) {
           const result = await client.wait(agent.name);
           console.log(`${result.name} (${result.status})`);
+        } else if (prompt) {
+          // Agent was started with a prompt. Print progress hint.
+          console.log(`${agent.name} (started) \u2014 use 'vh logs ${agent.name}' to watch progress`);
+
+          // Poll for early failure (up to 3 seconds).
+          const earlyError = await pollForEarlyError(client, agent.name, 3000);
+          if (earlyError) {
+            process.stderr.write(`error: ${earlyError}\n`);
+            process.exitCode = 1;
+          }
         } else {
           console.log(`${agent.name} (${agent.status})`);
         }
@@ -186,4 +196,41 @@ function parseIntOption(value: string): number {
     throw new Error(`invalid number: ${value}`);
   }
   return parsed;
+}
+
+/**
+ * Poll the daemon for up to `timeoutMs` to detect early agent failure.
+ * Returns the lastError string if the agent transitions to `failed`,
+ * or null if it remains running/healthy within the window.
+ */
+async function pollForEarlyError(
+  client: Client,
+  name: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  const pollInterval = 300;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await sleep(pollInterval);
+    try {
+      const agent = await client.whoami(name);
+      if (agent.status === "failed") {
+        return agent.lastError ?? "unknown error";
+      }
+      // If agent reached a non-running terminal state, stop polling.
+      if (agent.status === "stopped") {
+        return null;
+      }
+    } catch {
+      // Daemon unreachable — stop polling silently.
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

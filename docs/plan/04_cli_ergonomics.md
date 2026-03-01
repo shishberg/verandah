@@ -137,7 +137,7 @@ the error string is longer than 30 chars, truncate with `…`.
 
 In `--json` mode, include `last_error` in the output object.
 
-### [ ] 5. `vh new` progress hint and early error
+### [x] 5. `vh new` progress hint and early error
 
 When `vh new --prompt` creates and starts an agent (non-interactive,
 non-wait):
