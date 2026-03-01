@@ -6,7 +6,7 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash, Agent
 
 # Work on a plan task
 
-Open the plan file at `$ARGUMENTS` (default: `docs/plan/01_Verandah.md`).
+Open the plan file under `docs/plan` at `$ARGUMENTS`.
 
 ## Steps
 
@@ -19,9 +19,11 @@ Open the plan file at `$ARGUMENTS` (default: `docs/plan/01_Verandah.md`).
 7. Run `make check` to verify everything passes (lint + test + build).
 8. If `make check` fails, fix the issue and run it again. Loop until green.
 9. Mark the task done (`[x]`).
-10. Stage the plan update and all implementation files together.
-11. Commit with a message like: `task 3: name generator with Australian bias`
-12. Push.
+10. Add any useful implementation notes to the plan file.
+11. If there are any follow-up tasks needed, add them to the plan file.
+12. Stage the plan update and all implementation files together.
+13. Commit with a message like: `task 3: name generator with Australian bias`
+14. Push.
 
 ## Rules
 
