@@ -1,6 +1,6 @@
 module github.com/shishberg/verandah
 
-go 1.25.0
+go 1.25.4
 
 require (
 	github.com/oklog/ulid/v2 v2.1.1
@@ -22,3 +22,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/shishberg/llmock => /Users/agent/src/llmock

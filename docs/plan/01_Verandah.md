@@ -61,7 +61,7 @@ Random `adjective-noun` names with Australian bias.
 - `GenerateUniqueName(existing []string) (string, error)` — retry up to 5 times on collision
 - Unit tests: format validation, uniqueness under collision
 
-### [ ] 4. llmock CLI mode
+### [x] 4. llmock CLI mode
 
 Extend `github.com/shishberg/llmock` to support a CLI mode that mocks the `claude` binary.
 
