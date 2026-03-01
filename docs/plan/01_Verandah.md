@@ -49,7 +49,7 @@ Implement the store layer: schema creation, migrations, and CRUD operations for 
 - Unit tests using `t.TempDir()` for DB path
 - Test migrations: create fresh, verify schema
 
-### [ ] 3. Name generator
+### [x] 3. Name generator
 
 Random `adjective-noun` names with Australian bias.
 
