@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // shortSocketPath returns a unix socket path short enough for macOS (max 104 bytes).
@@ -51,7 +52,7 @@ func TestDaemon_StartAndPing(t *testing.T) {
 	}
 
 	// Ping the daemon.
-	client := NewClient(socketPath)
+	client := NewClient(socketPath, "")
 	if err := client.Ping(); err != nil {
 		t.Fatalf("Ping: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestDaemon_UnknownCommandReturnsError(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	client := NewClient(socketPath)
+	client := NewClient(socketPath, "")
 	resp, err := client.Send(Request{Command: "nonexistent"})
 	if err == nil {
 		t.Fatal("expected error for unknown command, got nil")
@@ -175,7 +176,7 @@ func TestDaemon_MultipleConcurrentConnections(t *testing.T) {
 	}
 
 	const numClients = 10
-	client := NewClient(socketPath)
+	client := NewClient(socketPath, "")
 
 	var wg sync.WaitGroup
 	errs := make(chan error, numClients)
@@ -269,7 +270,7 @@ func TestDaemon_PingResponseData(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	client := NewClient(socketPath)
+	client := NewClient(socketPath, "")
 	resp, err := client.Send(Request{Command: "ping"})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -340,6 +341,152 @@ func TestDaemon_ShutdownStopsRunningAgents(t *testing.T) {
 	}
 	if agent.StoppedAt == nil {
 		t.Error("agent StoppedAt should be set after shutdown")
+	}
+}
+
+func TestDaemon_ClientRetriesUntilDaemonReady(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	vhHome := t.TempDir()
+	socketPath := shortSocketPath(t)
+
+	// Start a daemon after a short delay, simulating the auto-start scenario
+	// where the daemon takes time to become ready.
+	daemonReady := make(chan error, 1)
+	var daemon *Daemon
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		d, err := NewDaemon(vhHome)
+		if err != nil {
+			daemonReady <- fmt.Errorf("NewDaemon: %w", err)
+			return
+		}
+		daemon = d
+		if err := d.Start(socketPath); err != nil {
+			daemonReady <- fmt.Errorf("Start: %w", err)
+			return
+		}
+		daemonReady <- nil
+	}()
+
+	t.Cleanup(func() {
+		// Wait for the daemon goroutine to finish before cleanup.
+		if err := <-daemonReady; err != nil {
+			t.Errorf("daemon goroutine: %v", err)
+			return
+		}
+		if daemon != nil {
+			_ = daemon.Shutdown()
+		}
+	})
+
+	// The client should fail on the first attempt but succeed after retries.
+	// We bypass auto-start (DaemonBin set to a no-op binary) and rely on
+	// the retry backoff to eventually connect.
+	client := NewClient(socketPath, vhHome)
+	client.DaemonBin = "/usr/bin/true"
+
+	if err := client.Ping(); err != nil {
+		t.Fatalf("Ping with retries failed: %v", err)
+	}
+}
+
+func TestDaemon_IdleTimeoutShutdown(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	vhHome := t.TempDir()
+	d, err := NewDaemon(vhHome)
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+
+	d.SetIdleTimeout(100 * time.Millisecond)
+
+	socketPath := shortSocketPath(t)
+	if err := d.Start(socketPath); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Wait for the idle timeout to fire.
+	select {
+	case <-d.Done():
+		// Expected: daemon signalled idle shutdown.
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not signal idle shutdown within 5s")
+	}
+
+	// Clean shutdown should succeed.
+	if err := d.Shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+}
+
+func TestDaemon_IdleTimeoutResetByConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	vhHome := t.TempDir()
+	d, err := NewDaemon(vhHome)
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+
+	d.SetIdleTimeout(300 * time.Millisecond)
+
+	socketPath := shortSocketPath(t)
+	if err := d.Start(socketPath); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = d.Shutdown() }()
+
+	// Send pings every 200ms to keep resetting the idle timer.
+	// After 3 pings (600ms total), the daemon should still be alive
+	// because each ping resets the 300ms timer.
+	client := NewClient(socketPath, "")
+	for i := range 3 {
+		time.Sleep(200 * time.Millisecond)
+		if err := client.Ping(); err != nil {
+			t.Fatalf("Ping %d: %v", i, err)
+		}
+	}
+
+	// Verify daemon is still running (Done channel not closed).
+	select {
+	case <-d.Done():
+		t.Fatal("daemon shut down too early; client connections should have reset the idle timer")
+	default:
+		// Good, daemon is still alive.
+	}
+}
+
+func TestClient_StaleSocketCleanedUp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	vhHome := t.TempDir()
+	socketPath := shortSocketPath(t)
+
+	// Create a stale socket file (just a regular file, not an actual socket).
+	if err := os.WriteFile(socketPath, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("create stale socket file: %v", err)
+	}
+
+	client := NewClient(socketPath, vhHome)
+	client.DaemonBin = "/usr/bin/true" // no-op so startDaemon doesn't fail hard
+
+	// Send will fail (daemon never actually starts), but the stale socket
+	// should be cleaned up during the auto-start attempt.
+	_, _ = client.Send(Request{Command: "ping"})
+
+	// Verify the stale file was removed.
+	if fileExists(socketPath) {
+		t.Error("stale socket file was not cleaned up during auto-start")
 	}
 }
 

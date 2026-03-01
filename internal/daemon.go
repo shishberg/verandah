@@ -37,6 +37,11 @@ type Daemon struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	idleTimeout time.Duration
+	idleTimer   *time.Timer
+	idleMu      sync.Mutex
+	done        chan struct{} // closed when the daemon should exit (idle timeout)
 }
 
 // NewDaemon creates a Daemon, opening the SQLite store and initializing
@@ -57,9 +62,52 @@ func NewDaemon(vhHome string) (*Daemon, error) {
 		claudeCfg: &ClaudeConfig{VHHome: vhHome},
 		ctx:       ctx,
 		cancel:    cancel,
+		done:      make(chan struct{}),
 	}
 
 	return d, nil
+}
+
+// SetIdleTimeout configures the daemon to shut down after the given duration
+// of inactivity. A zero value disables idle shutdown.
+func (d *Daemon) SetIdleTimeout(timeout time.Duration) {
+	d.idleTimeout = timeout
+}
+
+// Done returns a channel that is closed when the daemon should exit due to
+// idle timeout. Callers can select on this to trigger a clean shutdown.
+func (d *Daemon) Done() <-chan struct{} {
+	return d.done
+}
+
+// resetIdleTimer resets the idle timer. If the timer has not been started yet
+// and idleTimeout is non-zero, it creates a new timer.
+func (d *Daemon) resetIdleTimer() {
+	if d.idleTimeout == 0 {
+		return
+	}
+
+	d.idleMu.Lock()
+	defer d.idleMu.Unlock()
+
+	if d.idleTimer != nil {
+		d.idleTimer.Stop()
+	}
+	d.idleTimer = time.AfterFunc(d.idleTimeout, func() {
+		// Check if there are running agents before shutting down.
+		agents, err := d.store.ListAgents(StatusFilter("running"))
+		if err != nil {
+			log.Printf("idle check: list running agents: %v", err)
+			return
+		}
+		if len(agents) > 0 {
+			// Reset the timer; there are still running agents.
+			d.resetIdleTimer()
+			return
+		}
+		// No running agents and idle timeout elapsed; signal shutdown.
+		close(d.done)
+	})
 }
 
 // Start reconciles stale state, creates the logs directory, listens on the
@@ -90,6 +138,9 @@ func (d *Daemon) Start(socketPath string) error {
 	d.wg.Add(1)
 	go d.acceptLoop()
 
+	// Start the idle timer after everything is ready.
+	d.resetIdleTimer()
+
 	return nil
 }
 
@@ -97,6 +148,13 @@ func (d *Daemon) Start(socketPath string) error {
 // running agent processes, updates their statuses, closes the store, and
 // removes the socket file.
 func (d *Daemon) Shutdown() error {
+	// Stop the idle timer.
+	d.idleMu.Lock()
+	if d.idleTimer != nil {
+		d.idleTimer.Stop()
+	}
+	d.idleMu.Unlock()
+
 	// Signal all goroutines to stop.
 	d.cancel()
 
@@ -167,6 +225,9 @@ func (d *Daemon) acceptLoop() {
 func (d *Daemon) handleConnection(conn net.Conn) {
 	defer d.wg.Done()
 	defer func() { _ = conn.Close() }()
+
+	// Reset idle timer on every client connection.
+	d.resetIdleTimer()
 
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {

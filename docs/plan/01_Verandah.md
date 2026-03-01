@@ -129,7 +129,7 @@ Unix socket server with startup, shutdown, and protocol handling.
   - Shutdown daemon, verify socket removed
   - Stale PID reconciliation
 
-### [ ] 8. Auto-start and idle shutdown
+### [x] 8. Auto-start and idle shutdown
 
 CLI auto-starts daemon; daemon exits when idle.
 
