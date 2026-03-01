@@ -37,7 +37,7 @@ export function registerStopCommand(program: Command): void {
         }
 
         if (stopped.length === 0) {
-          console.log("no sessions to stop");
+          process.stderr.write("no sessions to stop\n");
         } else {
           for (const agentName of stopped) {
             console.log(`stopped ${agentName}`);

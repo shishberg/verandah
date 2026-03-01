@@ -25,7 +25,7 @@ Commander's default `exitOverride` and `configureOutput` can cause errors to pri
 - Fix: add `program.exitOverride()` and `program.configureOutput({ writeErr: () => {} })` to suppress Commander's duplicate output, OR restructure error handling so only one path writes to stderr
 - Test: add a unit test or integration test that captures stderr and asserts a single error line
 
-### [ ] 2. `vh stop --all` exits 0 when nothing to stop
+### [x] 2. `vh stop --all` exits 0 when nothing to stop
 
 Currently `vh stop --all` prints "no sessions to stop" to stdout and exits 0, but during dogfooding it appeared to exit 1. Verify and ensure consistent behavior.
 

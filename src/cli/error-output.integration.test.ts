@@ -53,4 +53,11 @@ describe("CLI error output", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
   });
+
+  it("stop --all with nothing to stop exits 0 with message on stderr", async () => {
+    const { code, stderr, stdout } = await runVh(["stop", "--all"]);
+    expect(code).toBe(0);
+    expect(stdout).toBe("");
+    expect(stderr.trim()).toBe("no sessions to stop");
+  });
 });
