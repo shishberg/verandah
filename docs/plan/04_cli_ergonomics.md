@@ -17,7 +17,7 @@ Every task must leave the codebase in a stable state with passing tests.
 
 ## Phase 0: Foundation
 
-### [ ] 1. Log message formatter
+### [x] 1. Log message formatter
 
 Add `src/lib/log-formatter.ts` with three output modes: `color` (ANSI),
 `text` (plain), and `json` (raw JSONL passthrough). The formatter is the
