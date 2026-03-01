@@ -92,7 +92,7 @@ message type in each mode. Test that `color` output contains ANSI codes,
 
 ## Phase 1: Logs
 
-### [ ] 2. Human-readable `vh logs`
+### [x] 2. Human-readable `vh logs`
 
 Change `vh logs` to render human-readable output by default, using the
 formatter from task 1.

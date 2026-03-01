@@ -2,6 +2,45 @@ import * as fs from "node:fs";
 import { Command } from "commander";
 import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath } from "../../lib/config.js";
+import { formatLogMessage, type LogFormat } from "../../lib/log-formatter.js";
+
+/**
+ * Resolve the effective log format from CLI options.
+ *
+ * Priority: --json > --color > --format > auto-detect.
+ * Auto-detect: `color` if stdout is a TTY, `text` otherwise.
+ */
+function resolveFormat(opts: {
+  json?: boolean;
+  color?: boolean;
+  format?: string;
+}): LogFormat {
+  if (opts.json) return "json";
+  if (opts.color) return "color";
+  if (opts.format) return opts.format as LogFormat;
+  return process.stdout.isTTY ? "color" : "text";
+}
+
+/**
+ * Render a single JSONL line through the formatter and print
+ * the resulting lines to stdout. Returns true if any output was produced.
+ */
+function renderLine(rawLine: string, format: LogFormat): boolean {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(rawLine);
+  } catch {
+    // If the line isn't valid JSON, pass it through as-is.
+    console.log(rawLine);
+    return true;
+  }
+
+  const lines = formatLogMessage(msg, format);
+  for (const line of lines) {
+    console.log(line);
+  }
+  return lines.length > 0;
+}
 
 /**
  * `vh logs` — view agent log output.
@@ -20,9 +59,15 @@ export function registerLogsCommand(program: Command): void {
     .option("-f, --follow", "Tail the log file (default when agent is running)")
     .option("--no-follow", "Print existing content and exit")
     .option("-n, --lines <number>", "Number of lines to show (0 = all)", parseIntOption, 0)
+    .option("--format <format>", "Output format: color, text, or json (default: color if TTY, text otherwise)")
+    .option("--json", "Output raw JSONL (shorthand for --format json)")
+    .option("--color", "Force colored output (shorthand for --format color)")
     .action(async (name: string, opts: {
       follow?: boolean;
       lines: number;
+      format?: string;
+      json?: boolean;
+      color?: boolean;
     }) => {
       try {
         const vhHome = resolveVHHome();
@@ -39,6 +84,8 @@ export function registerLogsCommand(program: Command): void {
           console.log(`no logs for '${name}'`);
           return;
         }
+
+        const format = resolveFormat(opts);
 
         // Determine follow mode.
         // --follow/-f explicitly enables follow.
@@ -65,13 +112,13 @@ export function registerLogsCommand(program: Command): void {
             ? allLines.slice(-opts.lines)
             : allLines;
           for (const line of lines) {
-            console.log(line);
+            renderLine(line, format);
           }
           return;
         }
 
         // Follow mode: read existing content, then poll for new content + check status.
-        await followLogs(logFilePath, opts.lines, name, client);
+        await followLogs(logFilePath, opts.lines, name, client, format);
       } catch (err) {
         process.stderr.write(
           `error: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -91,6 +138,7 @@ async function followLogs(
   initialLines: number,
   agentName: string,
   client: Client,
+  format: LogFormat,
 ): Promise<void> {
   // Read and print existing content.
   let offset = 0;
@@ -102,7 +150,7 @@ async function followLogs(
         ? allLines.slice(-initialLines)
         : allLines;
       for (const line of lines) {
-        console.log(line);
+        renderLine(line, format);
       }
     }
     offset = Buffer.byteLength(content, "utf8");
@@ -126,10 +174,10 @@ async function followLogs(
 
         const newContent = buf.toString("utf8");
         if (newContent.length > 0) {
-          // Print new lines. The content may or may not end with a newline.
+          // Print new lines through the formatter.
           const lines = newContent.trimEnd().split("\n");
           for (const line of lines) {
-            console.log(line);
+            renderLine(line, format);
           }
         }
       }
@@ -152,7 +200,7 @@ async function followLogs(
             if (remaining.length > 0) {
               const lines = remaining.trimEnd().split("\n");
               for (const line of lines) {
-                console.log(line);
+                renderLine(line, format);
               }
             }
           }
