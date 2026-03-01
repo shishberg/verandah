@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -319,4 +319,21 @@ export function handleLogs(
     ok: true,
     data: { path, status: agent.status } as unknown as Record<string, unknown>,
   };
+}
+
+/**
+ * Handle a `whoami` command: look up an agent by name and return its data.
+ */
+export function handleWhoami(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const whoamiArgs = args as unknown as WhoamiArgs;
+
+  const agent = daemon.store.getAgent(whoamiArgs.name);
+  if (!agent) {
+    return { ok: false, error: `agent '${whoamiArgs.name}' not found` };
+  }
+
+  return { ok: true, data: agent as unknown as Record<string, unknown> };
 }

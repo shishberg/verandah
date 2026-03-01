@@ -183,6 +183,20 @@ export class Client {
   }
 
   /**
+   * Query daemon for agent metadata by name. Used by `vh whoami`.
+   */
+  async whoami(name: string): Promise<Agent> {
+    const response = await this.send({
+      command: "whoami",
+      args: { name },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "whoami failed");
+    }
+    return response.data as unknown as Agent;
+  }
+
+  /**
    * Get the log file path and current status for an agent.
    */
   async logs(name: string): Promise<{ path: string; status: AgentStatus }> {

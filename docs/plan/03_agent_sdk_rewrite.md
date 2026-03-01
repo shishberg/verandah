@@ -255,7 +255,7 @@ First end-to-end commands.
   - `--no-follow` prints and exits
   - Follow mode exits when agent stops
 
-### [ ] 13. `vh whoami`
+### [x] 13. `vh whoami`
 
 - `src/cli/commands/whoami.ts`: `vh whoami` with `--json`, `--check`
   - Reads `VH_AGENT_NAME` from environment
