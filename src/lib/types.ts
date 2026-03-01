@@ -14,7 +14,8 @@ export type CommandName =
   | "wait"
   | "permission"
   | "notify-start"
-  | "notify-exit";
+  | "notify-exit"
+  | "shutdown";
 
 // Request sent from client to daemon over the unix socket.
 export type Request = {

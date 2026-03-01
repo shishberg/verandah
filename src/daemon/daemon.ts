@@ -323,5 +323,12 @@ export class Daemon {
     permission: (args) => handlePermission(this, args),
     "notify-start": (args) => handleNotifyStart(this, args),
     "notify-exit": (args) => handleNotifyExit(this, args),
+    shutdown: () => {
+      // Schedule shutdown after response is sent so the client receives { ok: true }.
+      setImmediate(() => {
+        this.shutdown().then(() => process.exit(0));
+      });
+      return { ok: true };
+    },
   };
 }

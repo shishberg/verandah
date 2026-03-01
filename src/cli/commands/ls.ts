@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import { Client } from "../../lib/client.js";
-import { resolveVHHome, socketPath } from "../../lib/config.js";
+import { resolveVHHome, socketPath, logPath } from "../../lib/config.js";
 import type { SessionWithStatus, SessionStatus } from "../../lib/types.js";
+import { parseLogProgress, formatElapsed } from "../commands/wait.js";
 
 /**
  * `vh ls` — list sessions.
@@ -31,7 +32,7 @@ export function registerLsCommand(program: Command): void {
         if (opts.json) {
           console.log(JSON.stringify(agents, null, 2));
         } else {
-          printTable(agents);
+          printTable(agents, vhHome);
         }
       } catch (err) {
         process.stderr.write(
@@ -44,14 +45,14 @@ export function registerLsCommand(program: Command): void {
 
 /**
  * Format and print sessions as a table with columns:
- * NAME, STATUS, MODEL, CWD, UPTIME
+ * NAME, STATUS, MODEL, CWD, LAST RUN
  */
-function printTable(agents: SessionWithStatus[]): void {
+function printTable(agents: SessionWithStatus[], vhHome: string): void {
   if (agents.length === 0) {
     return;
   }
 
-  const headers = ["NAME", "STATUS", "MODEL", "CWD", "UPTIME"];
+  const headers = ["NAME", "STATUS", "MODEL", "CWD", "LAST RUN"];
 
   // Build rows.
   const rows: string[][] = agents.map((agent) => [
@@ -59,7 +60,7 @@ function printTable(agents: SessionWithStatus[]): void {
     formatStatus(agent),
     agent.model ?? "-",
     agent.cwd,
-    formatUptime(agent),
+    formatLastRun(agent, vhHome),
   ]);
 
   // Calculate column widths (minimum = header width).
@@ -106,34 +107,41 @@ function formatStatus(agent: SessionWithStatus): string {
 }
 
 /**
- * Format uptime for a session.
- * Shows duration since createdAt for running/blocked sessions.
- * Shows `\u2014` (em dash) for idle/failed sessions.
+ * Format the LAST RUN column for a session.
+ * For running/blocked sessions: shows elapsed time since createdAt (query start).
+ * For idle/failed sessions: parses the log file to find the last result's duration.
  */
-function formatUptime(agent: SessionWithStatus): string {
-  if (agent.status === "idle" || agent.status === "failed") {
-    return "\u2014";
+function formatLastRun(agent: SessionWithStatus, vhHome: string): string {
+  if (agent.status === "running" || agent.status === "blocked") {
+    // Show elapsed time since query started.
+    const createdAt = new Date(agent.createdAt);
+    const now = new Date();
+    const diffMs = now.getTime() - createdAt.getTime();
+
+    if (diffMs < 0) return "\u2014";
+
+    const seconds = Math.floor(diffMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      return `${days}d${hours % 24}h`;
+    }
+    if (hours > 0) {
+      return `${hours}h${minutes % 60}m`;
+    }
+    if (minutes > 0) {
+      return `${minutes}m${seconds % 60}s`;
+    }
+    return `${seconds}s`;
   }
 
-  const createdAt = new Date(agent.createdAt);
-  const now = new Date();
-  const diffMs = now.getTime() - createdAt.getTime();
-
-  if (diffMs < 0) return "-";
-
-  const seconds = Math.floor(diffMs / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) {
-    return `${days}d${hours % 24}h`;
+  // idle/failed: parse log file for last result duration.
+  const logFilePath = logPath(agent.name, vhHome);
+  const progress = parseLogProgress(logFilePath);
+  if (progress.result) {
+    return formatElapsed(progress.result.durationMs);
   }
-  if (hours > 0) {
-    return `${hours}h${minutes % 60}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m${seconds % 60}s`;
-  }
-  return `${seconds}s`;
+  return "\u2014";
 }

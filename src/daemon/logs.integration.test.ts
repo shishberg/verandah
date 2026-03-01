@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { Client } from "../lib/client.js";
 import { logPath } from "../lib/config.js";
+import { filterLastQuery } from "../cli/commands/logs.js";
 import type { SessionStatus } from "../lib/types.js";
 
 // Mock the SDK module.
@@ -317,5 +318,87 @@ describe("vh logs integration", () => {
     await expect(client.logs("nonexistent")).rejects.toThrow(
       "session 'nonexistent' not found",
     );
+  });
+
+  it("--last filter shows only the most recent query", async () => {
+    vhHome = tmpVhHome();
+    socketFile = tmpSocketPath();
+    daemon = new Daemon(vhHome);
+    await daemon.start(socketFile);
+
+    const client = new Client(socketFile);
+
+    // First query: create session with a prompt.
+    mockQuery.mockReturnValueOnce(
+      createMockResponse([
+        initMessage("sess-last-1"),
+        assistantMessage("sess-last-1", "first response"),
+        resultMessage("sess-last-1"),
+      ]),
+    );
+
+    await client.send({
+      command: "new",
+      args: { name: "lasttest", cwd: "/tmp", prompt: "first question" },
+    });
+
+    // Wait for the runner to finish.
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Second query: send another prompt.
+    mockQuery.mockReturnValueOnce(
+      createMockResponse([
+        initMessage("sess-last-1"),
+        assistantMessage("sess-last-1", "second response"),
+        resultMessage("sess-last-1"),
+      ]),
+    );
+
+    await client.send({
+      command: "send",
+      args: { name: "lasttest", message: "second question" },
+    });
+
+    // Wait for the runner to finish.
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Read the full log file.
+    const logsResp = await client.logs("lasttest");
+    const logContent = fs.readFileSync(logsResp.path, "utf8");
+    const allLines = logContent.trimEnd().split("\n");
+
+    // Without --last: should contain both queries (two init messages).
+    const allParsed = allLines.map((l) => JSON.parse(l));
+    const allInits = allParsed.filter(
+      (m: Record<string, unknown>) => m.type === "system" && m.subtype === "init",
+    );
+    expect(allInits.length).toBe(2);
+
+    // Verify both assistant messages are present.
+    const allAssistant = allParsed.filter(
+      (m: Record<string, unknown>) => m.type === "assistant",
+    );
+    expect(allAssistant.length).toBe(2);
+
+    // With --last: filterLastQuery should return only the second query.
+    const lastLines = filterLastQuery(allLines);
+    const lastParsed = lastLines.map((l) => JSON.parse(l));
+
+    // Should have exactly one init.
+    const lastInits = lastParsed.filter(
+      (m: Record<string, unknown>) => m.type === "system" && m.subtype === "init",
+    );
+    expect(lastInits.length).toBe(1);
+
+    // Should have only the second assistant message.
+    const lastAssistant = lastParsed.filter(
+      (m: Record<string, unknown>) => m.type === "assistant",
+    );
+    expect(lastAssistant.length).toBe(1);
+    expect(
+      (lastAssistant[0] as Record<string, unknown> & {
+        message: { content: Array<{ text: string }> };
+      }).message.content[0].text,
+    ).toBe("second response");
   });
 });

@@ -271,6 +271,18 @@ export class Client {
   }
 
   /**
+   * Send a shutdown command to the daemon.
+   * Ignores connection-reset errors since the daemon closes during shutdown.
+   */
+  async shutdownDaemon(): Promise<void> {
+    try {
+      await this.send({ command: "shutdown" });
+    } catch {
+      // Connection reset is expected — daemon is shutting down.
+    }
+  }
+
+  /**
    * Notify the daemon that an interactive session has started.
    */
   async notifyStart(name: string): Promise<void> {

@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { Client } from "../lib/client.js";
+import { logPath } from "../lib/config.js";
+import { parseLogProgress, formatElapsed } from "../cli/commands/wait.js";
 import type { SessionWithStatus } from "../lib/types.js";
 
 // Mock the SDK module.
@@ -449,5 +451,64 @@ describe("vh new + vh ls integration", () => {
 
     const running = await client.list("running");
     expect(running).toHaveLength(0);
+  });
+
+  it("idle session with completed query has LAST RUN duration in log", async () => {
+    vhHome = tmpVhHome();
+    socketFile = tmpSocketPath();
+    daemon = new Daemon(vhHome);
+    await daemon.start(socketFile);
+
+    // Set up mock that completes immediately with duration_ms: 100.
+    mockQuery.mockReturnValueOnce(
+      createMockResponse([initMessage("sess-lr"), resultMessage("sess-lr")]),
+    );
+
+    const client = new Client(socketFile);
+
+    // Create session with prompt — it will run and finish.
+    await client.send({
+      command: "new",
+      args: { name: "lastrun-test", cwd: "/tmp", prompt: "hello" },
+    });
+
+    // Wait for the runner to finish.
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Verify session is idle.
+    const listResp = await client.send({ command: "list", args: {} });
+    expect(listResp.ok).toBe(true);
+    const data = listResp.data as unknown as { agents: SessionWithStatus[] };
+    expect(data.agents).toHaveLength(1);
+    expect(data.agents[0].status).toBe("idle");
+
+    // Parse the log file — should have a result with duration_ms: 100.
+    const logFile = logPath("lastrun-test", vhHome);
+    const progress = parseLogProgress(logFile);
+    expect(progress.result).not.toBeNull();
+    expect(progress.result!.durationMs).toBe(100);
+
+    // formatElapsed should format 100ms as "0s".
+    expect(formatElapsed(progress.result!.durationMs)).toBe("0s");
+  });
+
+  it("idle session without completed query shows no LAST RUN duration", async () => {
+    vhHome = tmpVhHome();
+    socketFile = tmpSocketPath();
+    daemon = new Daemon(vhHome);
+    await daemon.start(socketFile);
+
+    const client = new Client(socketFile);
+
+    // Create session without prompt — no query runs, no log file.
+    await client.send({
+      command: "new",
+      args: { name: "nolog-test", cwd: "/tmp" },
+    });
+
+    // Parse the log file — should have no result.
+    const logFile = logPath("nolog-test", vhHome);
+    const progress = parseLogProgress(logFile);
+    expect(progress.result).toBeNull();
   });
 });

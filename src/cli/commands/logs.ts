@@ -22,6 +22,27 @@ function resolveFormat(opts: {
 }
 
 /**
+ * Filter JSONL lines to only those from the most recent query.
+ *
+ * Scans backward for the last `{"type":"system","subtype":"init",...}` line
+ * and returns lines from that index onward. If no init line is found,
+ * returns all lines unchanged.
+ */
+export function filterLastQuery(lines: string[]): string[] {
+  let lastInitIndex = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const msg = JSON.parse(lines[i]);
+      if (msg.type === "system" && msg.subtype === "init") {
+        lastInitIndex = i;
+        break;
+      }
+    } catch { continue; }
+  }
+  return lastInitIndex >= 0 ? lines.slice(lastInitIndex) : lines;
+}
+
+/**
  * Render a single JSONL line through the formatter and print
  * the resulting lines to stdout. Returns true if any output was produced.
  */
@@ -59,12 +80,14 @@ export function registerLogsCommand(program: Command): void {
     .option("-f, --follow", "Tail the log file (default when session is running)")
     .option("--no-follow", "Print existing content and exit")
     .option("-n, --lines <number>", "Number of lines to show (0 = all)", parseIntOption, 0)
+    .option("--last", "Show only the most recent query")
     .option("--format <format>", "Output format: color, text, or json (default: color if TTY, text otherwise)")
     .option("--json", "Output raw JSONL (shorthand for --format json)")
     .option("--color", "Force colored output (shorthand for --format color)")
     .action(async (name: string, opts: {
       follow?: boolean;
       lines: number;
+      last?: boolean;
       format?: string;
       json?: boolean;
       color?: boolean;
@@ -107,7 +130,10 @@ export function registerLogsCommand(program: Command): void {
           if (content.length === 0) {
             return;
           }
-          const allLines = content.trimEnd().split("\n");
+          let allLines = content.trimEnd().split("\n");
+          if (opts.last) {
+            allLines = filterLastQuery(allLines);
+          }
           const lines = opts.lines > 0
             ? allLines.slice(-opts.lines)
             : allLines;
@@ -118,7 +144,7 @@ export function registerLogsCommand(program: Command): void {
         }
 
         // Follow mode: read existing content, then poll for new content + check status.
-        await followLogs(logFilePath, opts.lines, name, client, format);
+        await followLogs(logFilePath, opts.lines, opts.last ?? false, name, client, format);
       } catch (err) {
         process.stderr.write(
           `error: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -136,6 +162,7 @@ export function registerLogsCommand(program: Command): void {
 async function followLogs(
   logFilePath: string,
   initialLines: number,
+  lastOnly: boolean,
   agentName: string,
   client: Client,
   format: LogFormat,
@@ -145,7 +172,10 @@ async function followLogs(
   if (fs.existsSync(logFilePath)) {
     const content = fs.readFileSync(logFilePath, "utf8");
     if (content.length > 0) {
-      const allLines = content.trimEnd().split("\n");
+      let allLines = content.trimEnd().split("\n");
+      if (lastOnly) {
+        allLines = filterLastQuery(allLines);
+      }
       const lines = initialLines > 0
         ? allLines.slice(-initialLines)
         : allLines;

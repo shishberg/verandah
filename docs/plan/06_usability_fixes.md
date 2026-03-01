@@ -45,7 +45,7 @@ The 3-second `pollForEarlyError` makes `vh new --prompt` feel sluggish. The prog
 
 ## Phase 2: New features
 
-### [ ] 4. Add `vh daemon stop` subcommand
+### [x] 4. Add `vh daemon stop` subcommand
 
 There's no way to explicitly stop a background daemon. Add a `stop` subcommand to the `daemon` command.
 
@@ -57,7 +57,7 @@ There's no way to explicitly stop a background daemon. Add a `stop` subcommand t
 - Client method: `client.shutdownDaemon(): Promise<void>` — sends shutdown, ignores connection-reset errors (daemon is closing)
 - Test: integration test that starts a daemon, sends shutdown, verifies socket is gone
 
-### [ ] 5. `vh logs --last` to show only the most recent query
+### [x] 5. `vh logs --last` to show only the most recent query
 
 The log file accumulates across multiple `send` calls. Add a `--last` flag to show only the output from the most recent query.
 
@@ -66,7 +66,7 @@ The log file accumulates across multiple `send` calls. Add a `--last` flag to sh
 - `--last` composes with `-n` (last N lines of the last query) and `--follow`
 - Test: unit test for the slicing logic; integration test with a session that has two queries
 
-### [ ] 6. Replace UPTIME column with LAST RUN duration in `vh ls`
+### [x] 6. Replace UPTIME column with LAST RUN duration in `vh ls`
 
 The UPTIME column shows `—` for idle/failed sessions, which is most of them. Replace it with more useful information.
 

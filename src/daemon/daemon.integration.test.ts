@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -131,5 +131,28 @@ describe("Daemon integration", () => {
 
     // All should resolve without error (ping returns void).
     expect(results).toHaveLength(3);
+  });
+
+  it("should shutdown via client shutdown command and remove socket", async () => {
+    vhHome = tmpVhHome();
+    socketFile = tmpSocketPath();
+    daemon = new Daemon(vhHome);
+    await daemon.start(socketFile);
+
+    expect(fs.existsSync(socketFile)).toBe(true);
+
+    // Stub process.exit so the shutdown handler doesn't kill the test runner.
+    const exitStub = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
+
+    const client = new Client(socketFile);
+    await client.shutdownDaemon();
+
+    // Wait for the setImmediate + shutdown to complete.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(fs.existsSync(socketFile)).toBe(false);
+
+    exitStub.mockRestore();
+    daemon = null; // Prevent double shutdown in afterEach.
   });
 });
