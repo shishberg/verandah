@@ -103,10 +103,9 @@ describe("vh new --interactive integration", () => {
     });
     expect(startResp.ok).toBe(true);
 
-    // Session exists in store. Status/stoppedAt columns are gone.
+    // Session exists in store with no legacy columns.
     const sess = daemon.store.getSession("alpha")!;
     expect(sess).not.toHaveProperty("status");
-    expect(sess).not.toHaveProperty("stoppedAt");
 
     // Derived status via list shows "idle" (no in-memory runner for interactive sessions).
     const listResp = await client.send({ command: "list", args: {} });
@@ -281,8 +280,8 @@ describe("vh new --interactive integration", () => {
     });
     expect(exitResp.ok).toBe(true);
 
-    // 5. Verify idle in list (uses legacy "stopped" filter which maps to "idle").
-    const idleList = await client.send({ command: "list", args: { status: "stopped" } });
+    // 5. Verify idle in list.
+    const idleList = await client.send({ command: "list", args: { status: "idle" } });
     expect(idleList.ok).toBe(true);
     const idleData = idleList.data as unknown as { agents: SessionWithStatus[] };
     expect(idleData.agents).toHaveLength(1);
@@ -312,8 +311,8 @@ describe("vh new --interactive integration", () => {
 
     await client.notifyExit("conv-test", 0);
 
-    // After exit with code 0, derives as idle (legacy "stopped" maps to "idle").
-    const idleAgents = await client.list("stopped");
+    // After exit with code 0, derives as idle.
+    const idleAgents = await client.list("idle");
     expect(idleAgents).toHaveLength(1);
     expect(idleAgents[0].name).toBe("conv-test");
   });

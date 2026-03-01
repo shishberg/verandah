@@ -65,7 +65,7 @@ export class Daemon {
   }
 
   /**
-   * Convert an Agent from the store to a SessionWithStatus by deriving status
+   * Convert a Session from the store to a SessionWithStatus by deriving status
    * from the in-memory activeQueries map.
    */
   sessionWithStatus(session: Session): SessionWithStatus {

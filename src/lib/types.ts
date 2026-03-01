@@ -1,29 +1,3 @@
-// Agent status values matching the DB schema.
-export type AgentStatus =
-  | "created"
-  | "running"
-  | "stopped"
-  | "failed"
-  | "blocked";
-
-// Agent record. Field names are camelCase in TypeScript;
-// the store layer maps to/from snake_case DB columns.
-export type Agent = {
-  id: string;
-  name: string;
-  sessionId: string | null;
-  status: AgentStatus;
-  model: string | null;
-  cwd: string;
-  prompt: string | null;
-  permissionMode: string | null;
-  maxTurns: number | null;
-  allowedTools: string | null;
-  lastError: string | null;
-  createdAt: string;
-  stoppedAt: string | null;
-};
-
 // --- Socket protocol types ---
 
 // All valid command names sent over the unix socket.
@@ -96,7 +70,7 @@ export type WhoamiArgs = {
 };
 
 export type ListArgs = {
-  status?: AgentStatus;
+  status?: SessionStatus;
 };
 
 export type WaitArgs = {
@@ -142,10 +116,9 @@ export type PendingPermission = {
   createdAt: Date;
 };
 
-// --- Session types (new, coexisting with Agent types until migration) ---
+// --- Session types ---
 
-// Session record. Like Agent but without `status` and `stoppedAt` —
-// status is derived at runtime, not stored.
+// Session record. Status is derived at runtime, not stored.
 export type Session = {
   id: string;
   name: string;
@@ -167,7 +140,7 @@ export type SessionStatus = "idle" | "running" | "blocked" | "failed";
 // A session with its derived status attached.
 export type SessionWithStatus = Session & { status: SessionStatus };
 
-// Arguments for creating a new session (same shape as CreateAgentArgs).
+// Arguments for creating a new session.
 export type CreateSessionArgs = {
   name: string;
   cwd: string;
@@ -179,7 +152,6 @@ export type CreateSessionArgs = {
 };
 
 // Fields that can be updated on an existing session.
-// Drops `status` and `stoppedAt` (not stored), keeps `lastError`.
 export type UpdateSessionFields = {
   sessionId?: string | null;
   model?: string | null;

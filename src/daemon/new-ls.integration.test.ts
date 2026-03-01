@@ -297,7 +297,7 @@ describe("vh new + vh ls integration", () => {
     expect(resp2.error).toContain("already exists");
   });
 
-  it("list with status filter (legacy compat: created maps to idle)", async () => {
+  it("list with status filter", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -324,13 +324,6 @@ describe("vh new + vh ls integration", () => {
     const idleData = idleResp.data as unknown as { agents: SessionWithStatus[] };
     expect(idleData.agents).toHaveLength(1);
     expect(idleData.agents[0].name).toBe("agent-a");
-
-    // List with legacy "created" filter — maps to "idle".
-    const createdResp = await client.send({ command: "list", args: { status: "created" } });
-    expect(createdResp.ok).toBe(true);
-    const createdData = createdResp.data as unknown as { agents: SessionWithStatus[] };
-    expect(createdData.agents).toHaveLength(1);
-    expect(createdData.agents[0].name).toBe("agent-a");
 
     // List only failed — should show one.
     const failedResp = await client.send({ command: "list", args: { status: "failed" } });
@@ -450,9 +443,9 @@ describe("vh new + vh ls integration", () => {
     expect(agents).toHaveLength(1);
     expect(agents[0].name).toBe("conv-test");
 
-    // list with legacy filter convenience method.
-    const created = await client.list("created");
-    expect(created).toHaveLength(1);
+    // list with status filter convenience method.
+    const idle = await client.list("idle");
+    expect(idle).toHaveLength(1);
 
     const running = await client.list("running");
     expect(running).toHaveLength(0);

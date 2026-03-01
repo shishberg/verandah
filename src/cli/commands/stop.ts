@@ -3,18 +3,18 @@ import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath } from "../../lib/config.js";
 
 /**
- * `vh stop` — stop one or all running agents.
+ * `vh stop` — stop one or all running sessions.
  *
  * Usage:
- *   vh stop <name>   — stop a single agent
- *   vh stop --all    — stop all running agents
+ *   vh stop <name>   — stop a single session
+ *   vh stop --all    — stop all running sessions
  */
 export function registerStopCommand(program: Command): void {
   program
     .command("stop")
-    .description("Stop a running agent")
-    .argument("[name]", "Agent name")
-    .option("--all", "Stop all running agents")
+    .description("Stop a running session")
+    .argument("[name]", "Session name")
+    .option("--all", "Stop all running sessions")
     .action(async (name: string | undefined, opts: { all?: boolean }) => {
       try {
         if (!name && !opts.all) {
@@ -37,7 +37,7 @@ export function registerStopCommand(program: Command): void {
         }
 
         if (stopped.length === 0) {
-          console.log("no agents to stop");
+          console.log("no sessions to stop");
         } else {
           for (const agentName of stopped) {
             console.log(`stopped ${agentName}`);

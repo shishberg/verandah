@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
 import type {
-  Agent,
-  AgentStatus,
   Request,
   Response,
   NewArgs,
@@ -24,61 +22,6 @@ import type {
 import { sessionStatus } from "./types.js";
 
 describe("types", () => {
-  describe("AgentStatus", () => {
-    it("accepts all valid status values", () => {
-      const statuses: AgentStatus[] = [
-        "created",
-        "running",
-        "stopped",
-        "failed",
-        "blocked",
-      ];
-      expect(statuses).toHaveLength(5);
-    });
-  });
-
-  describe("Agent", () => {
-    it("can construct a full agent record", () => {
-      const agent: Agent = {
-        id: "01JXXXXXXXXXXXXXXXXXXXXXXX",
-        name: "alpha",
-        sessionId: "session-123",
-        status: "running",
-        model: "claude-opus-4-6",
-        cwd: "/home/user/project",
-        prompt: "fix the tests",
-        permissionMode: "default",
-        maxTurns: 10,
-        allowedTools: "Bash(git:*) Edit Read",
-        createdAt: "2026-03-01T10:00:00",
-        stoppedAt: null,
-      };
-      expect(agent.name).toBe("alpha");
-      expect(agent.status).toBe("running");
-      expect(agent.stoppedAt).toBeNull();
-    });
-
-    it("allows nullable fields to be null", () => {
-      const agent: Agent = {
-        id: "01JXXXXXXXXXXXXXXXXXXXXXXX",
-        name: "beta",
-        sessionId: null,
-        status: "created",
-        model: null,
-        cwd: "/tmp",
-        prompt: null,
-        permissionMode: null,
-        maxTurns: null,
-        allowedTools: null,
-        createdAt: "2026-03-01T10:00:00",
-        stoppedAt: null,
-      };
-      expect(agent.sessionId).toBeNull();
-      expect(agent.model).toBeNull();
-      expect(agent.prompt).toBeNull();
-    });
-  });
-
   describe("Request", () => {
     it("can construct a request with args", () => {
       const req: Request = {
@@ -283,9 +226,8 @@ describe("types", () => {
         createdAt: "2026-03-01T10:00:00Z",
       };
       expect(session.name).toBe("alpha");
-      // Session has no status or stoppedAt fields
+      // Session does not include a status field (status is derived at runtime)
       expect("status" in session).toBe(false);
-      expect("stoppedAt" in session).toBe(false);
     });
 
     it("SessionWithStatus includes derived status", () => {
@@ -306,7 +248,7 @@ describe("types", () => {
       expect(session.status).toBe("idle");
     });
 
-    it("CreateSessionArgs matches CreateAgentArgs shape", () => {
+    it("CreateSessionArgs has all required fields", () => {
       const args: CreateSessionArgs = {
         name: "alpha",
         cwd: "/tmp",
@@ -319,7 +261,7 @@ describe("types", () => {
       expect(args.name).toBe("alpha");
     });
 
-    it("UpdateSessionFields omits status and stoppedAt", () => {
+    it("UpdateSessionFields has all expected fields", () => {
       const fields: UpdateSessionFields = {
         sessionId: "session-456",
         model: "haiku",

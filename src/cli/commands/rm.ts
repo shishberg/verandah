@@ -3,18 +3,18 @@ import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath } from "../../lib/config.js";
 
 /**
- * `vh rm` — remove an agent and its log file.
+ * `vh rm` — remove a session and its log file.
  *
  * Usage:
- *   vh rm <name>           — remove a stopped agent
- *   vh rm <name> --force   — stop and remove a running agent
+ *   vh rm <name>           — remove an idle session
+ *   vh rm <name> --force   — stop and remove a running session
  */
 export function registerRmCommand(program: Command): void {
   program
     .command("rm")
-    .description("Remove an agent")
-    .argument("<name>", "Agent name")
-    .option("--force", "Stop running agent before removing")
+    .description("Remove a session")
+    .argument("<name>", "Session name")
+    .option("--force", "Stop running session before removing")
     .action(async (name: string, opts: { force?: boolean }) => {
       try {
         const vhHome = resolveVHHome();

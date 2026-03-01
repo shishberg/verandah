@@ -71,9 +71,8 @@ describe("Store", () => {
         const session = store2.getSession("old-agent");
         expect(session).not.toBeNull();
         expect(session!.lastError).toBeNull();
-        // Session shape should not have status or stoppedAt.
+        // Migrated session should not have legacy columns.
         expect(session!).not.toHaveProperty("status");
-        expect(session!).not.toHaveProperty("stoppedAt");
 
         // Verify we can set lastError on the migrated record.
         store2.updateSession("old-agent", { lastError: "error_max_turns" });
@@ -143,13 +142,11 @@ describe("Store", () => {
         expect(sessA!.sessionId).toBe("sess-123");
         expect(sessA!.lastError).toBeNull();
         expect(sessA!).not.toHaveProperty("status");
-        expect(sessA!).not.toHaveProperty("stoppedAt");
 
         const sessB = store2.getSession("session-b");
         expect(sessB).not.toBeNull();
         expect(sessB!.lastError).toBe("error_max_turns");
         expect(sessB!).not.toHaveProperty("status");
-        expect(sessB!).not.toHaveProperty("stoppedAt");
 
         // Verify list works.
         const all = store2.listSessions();
@@ -189,9 +186,8 @@ describe("Store", () => {
       expect(session.allowedTools).toBeNull();
       expect(session.lastError).toBeNull();
       expect(session.createdAt).toBeTruthy();
-      // Session shape should not have status or stoppedAt.
+      // Session shape should not have legacy status column.
       expect(session).not.toHaveProperty("status");
-      expect(session).not.toHaveProperty("stoppedAt");
     });
 
     it("creates a session with all optional fields", () => {

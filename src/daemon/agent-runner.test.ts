@@ -177,7 +177,7 @@ describe("AgentRunner", () => {
       await waitForRunner(runner);
     });
 
-    it("session shape has no status or stoppedAt after start", async () => {
+    it("session shape has no legacy status column after start", async () => {
       mockQuery.mockReturnValueOnce(createMockResponse([]));
 
       const agent = createTestSession(store, { name: "no-status-write" });
@@ -191,10 +191,8 @@ describe("AgentRunner", () => {
       runner.start(agent, "hello");
       await waitForRunner(runner);
 
-      // Session shape should not have status or stoppedAt — those are gone.
       const final = store.getSession("no-status-write")!;
       expect(final).not.toHaveProperty("status");
-      expect(final).not.toHaveProperty("stoppedAt");
     });
 
     it("messages flow, session ID extracted, lastError stays null on success", async () => {
@@ -251,8 +249,6 @@ describe("AgentRunner", () => {
       const updated = store.getSession("test-agent")!;
       expect(updated.sessionId).toBe("sess-abc-123");
       expect(updated.lastError).toBeNull();
-      // Session shape should not have stoppedAt.
-      expect(updated).not.toHaveProperty("stoppedAt");
     });
 
     it("calls query with correct options", async () => {
@@ -294,7 +290,7 @@ describe("AgentRunner", () => {
   });
 
   describe("error handling", () => {
-    it("sets lastError when result has is_error=true, does not write status/stoppedAt", async () => {
+    it("sets lastError when result has is_error=true", async () => {
       const resultMessage = {
         type: "result",
         subtype: "error_during_execution",
@@ -326,8 +322,6 @@ describe("AgentRunner", () => {
 
       const updated = store.getSession("err-agent")!;
       expect(updated.lastError).toBe("error_during_execution");
-      // Session shape should not have stoppedAt.
-      expect(updated).not.toHaveProperty("stoppedAt");
     });
 
     it("stores lastError subtype on error result", async () => {
@@ -364,7 +358,7 @@ describe("AgentRunner", () => {
       expect(updated.lastError).toBe("error_max_turns");
     });
 
-    it("does not write status/stoppedAt when generator throws", async () => {
+    it("does not write status when generator throws", async () => {
       mockQuery.mockReturnValueOnce(
         createErrorResponse([], new Error("network error")),
       );
@@ -380,8 +374,7 @@ describe("AgentRunner", () => {
       await waitForRunner(runner);
 
       const updated = store.getSession("throw-agent")!;
-      // Session shape should not have stoppedAt.
-      expect(updated).not.toHaveProperty("stoppedAt");
+      expect(updated).not.toHaveProperty("status");
     });
   });
 
@@ -420,8 +413,7 @@ describe("AgentRunner", () => {
       await waitForRunner(runner);
 
       const updated = store.getSession("abort-agent")!;
-      // Session shape should not have stoppedAt.
-      expect(updated).not.toHaveProperty("stoppedAt");
+      expect(updated).not.toHaveProperty("status");
     });
   });
 
@@ -923,8 +915,7 @@ describe("AgentRunner", () => {
       ctrl.error(new Error("aborted"));
       await waitForRunner(runner);
 
-      // Session shape should not have stoppedAt.
-      expect(store.getSession("stop-blocked-agent")!).not.toHaveProperty("stoppedAt");
+      expect(store.getSession("stop-blocked-agent")!).not.toHaveProperty("status");
     });
   });
 });

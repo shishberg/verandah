@@ -137,7 +137,7 @@ Migrate the database: rename `agents` → `sessions`, drop `status`/`stopped_at`
 
 ## Phase 3: Client and CLI
 
-### [ ] 4. Client and CLI commands
+### [x] 4. Client and CLI commands
 
 Update the client library and all CLI commands for "session" terminology and new status values.
 
@@ -162,7 +162,7 @@ Update the client library and all CLI commands for "session" terminology and new
 
 ## Phase 4: Cleanup
 
-### [ ] 5. Remove deprecated types and compat shims
+### [x] 5. Remove deprecated types and compat shims
 
 Remove old types and temporary compatibility code now that all consumers use the new API.
 

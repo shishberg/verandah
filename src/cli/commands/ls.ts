@@ -1,20 +1,20 @@
 import { Command } from "commander";
 import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath } from "../../lib/config.js";
-import type { Agent, AgentStatus } from "../../lib/types.js";
+import type { SessionWithStatus, SessionStatus } from "../../lib/types.js";
 
 /**
- * `vh ls` — list agents.
+ * `vh ls` — list sessions.
  *
- * Displays agents in a table or JSON format.
+ * Displays sessions in a table or JSON format.
  * Optionally filtered by status.
  */
 export function registerLsCommand(program: Command): void {
   program
     .command("ls")
-    .description("List agents")
+    .description("List sessions")
     .option("--json", "Output as JSON")
-    .option("--status <status>", "Filter by status")
+    .option("--status <status>", "Filter by status (idle, running, blocked, failed)")
     .action(async (opts: { json?: boolean; status?: string }) => {
       try {
         const vhHome = resolveVHHome();
@@ -24,7 +24,7 @@ export function registerLsCommand(program: Command): void {
         });
 
         const statusFilter = opts.status
-          ? (opts.status as AgentStatus)
+          ? (opts.status as SessionStatus)
           : undefined;
         const agents = await client.list(statusFilter);
 
@@ -43,10 +43,10 @@ export function registerLsCommand(program: Command): void {
 }
 
 /**
- * Format and print agents as a table with columns:
+ * Format and print sessions as a table with columns:
  * NAME, STATUS, MODEL, CWD, UPTIME
  */
-function printTable(agents: Agent[]): void {
+function printTable(agents: SessionWithStatus[]): void {
   if (agents.length === 0) {
     return;
   }
@@ -90,11 +90,11 @@ function printTable(agents: Agent[]): void {
 const MAX_ERROR_LENGTH = 30;
 
 /**
- * Format the STATUS column for an agent.
+ * Format the STATUS column for a session.
  * When `lastError` is set, appends it in parentheses: `failed (error_max_turns)`.
  * Truncates the error string to MAX_ERROR_LENGTH chars with `…` if needed.
  */
-function formatStatus(agent: Agent): string {
+function formatStatus(agent: SessionWithStatus): string {
   if (agent.lastError == null) {
     return agent.status;
   }
@@ -106,13 +106,13 @@ function formatStatus(agent: Agent): string {
 }
 
 /**
- * Format uptime for an agent.
- * Shows duration since createdAt for running/blocked agents.
- * Shows `-` for all other statuses.
+ * Format uptime for a session.
+ * Shows duration since createdAt for running/blocked sessions.
+ * Shows `\u2014` (em dash) for idle/failed sessions.
  */
-function formatUptime(agent: Agent): string {
-  if (agent.status !== "running" && agent.status !== "blocked") {
-    return "-";
+function formatUptime(agent: SessionWithStatus): string {
+  if (agent.status === "idle" || agent.status === "failed") {
+    return "\u2014";
   }
 
   const createdAt = new Date(agent.createdAt);

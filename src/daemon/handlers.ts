@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, Response, SessionStatus } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -22,18 +22,6 @@ function validateName(name: string): string | null {
     return "session name must match [a-zA-Z0-9][a-zA-Z0-9_-]*";
   }
   return null;
-}
-
-/**
- * Map legacy status filter values to SessionStatus.
- * "created" and "stopped" both map to "idle" for CLI compatibility.
- * This legacy mapping will be removed in task 5.
- */
-function mapLegacyStatus(status: string): SessionStatus {
-  if (status === "created" || status === "stopped") {
-    return "idle";
-  }
-  return status as SessionStatus;
 }
 
 /**
@@ -111,8 +99,7 @@ export function handleNew(
 
 /**
  * Handle a `list` command: return all sessions, optionally filtered by status.
- * Derives status from in-memory state. Supports legacy "created"/"stopped" filters
- * by mapping them to "idle" (removed in task 5).
+ * Derives status from in-memory state.
  */
 export function handleList(
   daemon: Daemon,
@@ -129,8 +116,7 @@ export function handleList(
   // Filter in memory if a status filter was provided.
   let filtered = sessions;
   if (listArgs.status) {
-    const targetStatus = mapLegacyStatus(listArgs.status);
-    filtered = sessions.filter((s) => s.status === targetStatus);
+    filtered = sessions.filter((s) => s.status === listArgs.status);
   }
 
   return {

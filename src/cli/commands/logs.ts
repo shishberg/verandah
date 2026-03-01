@@ -43,20 +43,20 @@ function renderLine(rawLine: string, format: LogFormat): boolean {
 }
 
 /**
- * `vh logs` — view agent log output.
+ * `vh logs` — view session log output.
  *
  * Gets the log file path from the daemon, then reads/tails the file directly.
  *
  * - No-follow mode: print last N lines (or all) and exit.
- * - Follow mode (default when agent is running): tail the log file,
- *   poll agent status periodically, exit when agent stops/fails.
+ * - Follow mode (default when session is running): tail the log file,
+ *   poll session status periodically, exit when session stops/fails.
  */
 export function registerLogsCommand(program: Command): void {
   program
     .command("logs")
-    .description("View agent log output")
-    .argument("<name>", "Agent name")
-    .option("-f, --follow", "Tail the log file (default when agent is running)")
+    .description("View session log output")
+    .argument("<name>", "Session name")
+    .option("-f, --follow", "Tail the log file (default when session is running)")
     .option("--no-follow", "Print existing content and exit")
     .option("-n, --lines <number>", "Number of lines to show (0 = all)", parseIntOption, 0)
     .option("--format <format>", "Output format: color, text, or json (default: color if TTY, text otherwise)")
@@ -76,7 +76,7 @@ export function registerLogsCommand(program: Command): void {
           vhHome,
         });
 
-        // Get log path and agent status from daemon.
+        // Get log path and session status from daemon.
         const { path: logFilePath, status } = await client.logs(name);
 
         // Check if log file exists.
@@ -90,14 +90,14 @@ export function registerLogsCommand(program: Command): void {
         // Determine follow mode.
         // --follow/-f explicitly enables follow.
         // --no-follow explicitly disables follow.
-        // Default: follow if agent is running or blocked.
+        // Default: follow if session is running or blocked.
         let follow: boolean;
         if (opts.follow === true) {
           follow = true;
         } else if (opts.follow === false) {
           follow = false;
         } else {
-          // Default: follow if agent is currently active.
+          // Default: follow if session is currently active.
           follow = status === "running" || status === "blocked";
         }
 
@@ -130,7 +130,7 @@ export function registerLogsCommand(program: Command): void {
 
 /**
  * Follow a log file, printing new lines as they appear.
- * Polls the agent status periodically and exits when the agent is
+ * Polls the session status periodically and exits when the session is
  * no longer running/blocked (after flushing remaining content).
  */
 async function followLogs(
@@ -156,7 +156,7 @@ async function followLogs(
     offset = Buffer.byteLength(content, "utf8");
   }
 
-  // Poll loop: check for new content and agent status.
+  // Poll loop: check for new content and session status.
   const POLL_INTERVAL_MS = 500;
 
   while (true) {
@@ -183,11 +183,11 @@ async function followLogs(
       }
     }
 
-    // Check agent status.
+    // Check session status.
     try {
       const { status } = await client.logs(agentName);
       if (status !== "running" && status !== "blocked") {
-        // Agent has stopped — flush any remaining content and exit.
+        // Session has stopped — flush any remaining content and exit.
         if (fs.existsSync(logFilePath)) {
           const stat = fs.statSync(logFilePath);
           if (stat.size > offset) {

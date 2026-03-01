@@ -6,19 +6,19 @@ import { resolveVHHome, socketPath } from "../../lib/config.js";
 import type { NewArgs } from "../../lib/types.js";
 
 /**
- * `vh new` — create a new agent.
+ * `vh new` — create a new session.
  *
- * Creates an agent record in the daemon. If `--prompt` is provided,
- * the agent is started immediately. If `--wait` is also provided,
- * the CLI blocks until the agent reaches a terminal status.
+ * Creates a session record in the daemon. If `--prompt` is provided,
+ * the session is started immediately. If `--wait` is also provided,
+ * the CLI blocks until the session reaches a terminal status.
  * If `--interactive` is provided, execs the claude CLI directly
  * with stdio inherited.
  */
 export function registerNewCommand(program: Command): void {
   program
     .command("new")
-    .description("Create a new agent")
-    .option("--name <name>", "Agent name (random if omitted)")
+    .description("Create a new session")
+    .option("--name <name>", "Session name (random if omitted)")
     .option("--prompt <prompt>", "Initial prompt (use - for stdin)")
     .option("--cwd <dir>", "Working directory", process.cwd())
     .option("--model <model>", "Model to use")
@@ -26,7 +26,7 @@ export function registerNewCommand(program: Command): void {
     .option("--max-turns <n>", "Max turns", parseIntOption)
     .option("--allowed-tools <tools>", "Comma-separated tool list")
     .option("--interactive", "Launch interactive claude session")
-    .option("--wait", "Block until agent reaches terminal status")
+    .option("--wait", "Block until session reaches terminal status")
     .action(async (opts: {
       name?: string;
       prompt?: string;
@@ -92,12 +92,12 @@ export function registerNewCommand(program: Command): void {
           return;
         }
 
-        // If --wait, block until agent reaches terminal status.
+        // If --wait, block until session reaches terminal status.
         if (opts.wait) {
           const result = await client.wait(agent.name);
           console.log(`${result.name} (${result.status})`);
         } else if (prompt) {
-          // Agent was started with a prompt. Print progress hint.
+          // Session was started with a prompt. Print progress hint.
           console.log(`${agent.name} (started) \u2014 use 'vh logs ${agent.name}' to watch progress`);
 
           // Poll for early failure (up to 3 seconds).
@@ -121,7 +121,7 @@ export function registerNewCommand(program: Command): void {
 /**
  * Run claude in interactive mode.
  *
- * 1. Notify daemon that the agent has started.
+ * 1. Notify daemon that the session has started.
  * 2. Spawn claude with stdio inherited.
  * 3. Notify daemon when claude exits.
  */
@@ -135,7 +135,7 @@ async function runInteractive(
     permissionMode?: string;
   },
 ): Promise<void> {
-  // Notify daemon that the agent is starting.
+  // Notify daemon that the session is starting.
   await client.notifyStart(name);
 
   // Build claude CLI arguments.
@@ -178,7 +178,7 @@ async function runInteractive(
     exitCode = 1;
   }
 
-  // Notify daemon that the agent has exited.
+  // Notify daemon that the session has exited.
   try {
     await client.notifyExit(name, exitCode);
   } catch {
@@ -199,8 +199,8 @@ function parseIntOption(value: string): number {
 }
 
 /**
- * Poll the daemon for up to `timeoutMs` to detect early agent failure.
- * Returns the lastError string if the agent transitions to `failed`,
+ * Poll the daemon for up to `timeoutMs` to detect early session failure.
+ * Returns the lastError string if the session transitions to `failed`,
  * or null if it remains running/healthy within the window.
  */
 async function pollForEarlyError(
@@ -218,8 +218,8 @@ async function pollForEarlyError(
       if (agent.status === "failed") {
         return agent.lastError ?? "unknown error";
       }
-      // If agent reached a non-running terminal state, stop polling.
-      if (agent.status === "stopped") {
+      // If session reached a non-running terminal state, stop polling.
+      if (agent.status === "idle") {
         return null;
       }
     } catch {

@@ -2,7 +2,7 @@ import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import type { Request, Response, NewArgs, Agent, AgentStatus } from "./types.js";
+import type { Request, Response, NewArgs, SessionWithStatus, SessionStatus } from "./types.js";
 
 export type ClientOptions = {
   /** Path to the daemon entry script (dist/daemon.js). Required for auto-start. */
@@ -78,23 +78,23 @@ export class Client {
   }
 
   /**
-   * Create a new agent. Returns the agent data or throws on error.
+   * Create a new session. Returns the session data or throws on error.
    */
-  async newAgent(args: NewArgs): Promise<Agent> {
+  async newAgent(args: NewArgs): Promise<SessionWithStatus> {
     const response = await this.send({
       command: "new",
       args: args as unknown as Record<string, unknown>,
     });
     if (!response.ok) {
-      throw new Error(response.error ?? "new agent failed");
+      throw new Error(response.error ?? "new session failed");
     }
-    return response.data as unknown as Agent;
+    return response.data as unknown as SessionWithStatus;
   }
 
   /**
-   * List agents, optionally filtered by status.
+   * List sessions, optionally filtered by status.
    */
-  async list(statusFilter?: AgentStatus): Promise<Agent[]> {
+  async list(statusFilter?: SessionStatus): Promise<SessionWithStatus[]> {
     const args: Record<string, unknown> = {};
     if (statusFilter) {
       args.status = statusFilter;
@@ -103,17 +103,17 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "list failed");
     }
-    const data = response.data as unknown as { agents: Agent[] };
+    const data = response.data as unknown as { agents: SessionWithStatus[] };
     return data.agents;
   }
 
   /**
-   * Send a message to an existing agent.
-   * - Created agent: starts with message as prompt.
-   * - Stopped/failed agent: resumes with message.
-   * - Running/blocked agent: throws an error.
+   * Send a message to an existing session.
+   * - Idle session: starts or resumes with message.
+   * - Failed session: resumes with message.
+   * - Running/blocked session: throws an error.
    */
-  async sendMessage(name: string, message: string): Promise<Agent> {
+  async sendMessage(name: string, message: string): Promise<SessionWithStatus> {
     const response = await this.send({
       command: "send",
       args: { name, message },
@@ -121,11 +121,11 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "send failed");
     }
-    return response.data as unknown as Agent;
+    return response.data as unknown as SessionWithStatus;
   }
 
   /**
-   * Stop an agent by name. Returns the list of stopped agent names.
+   * Stop a session by name. Returns the list of stopped session names.
    */
   async stop(name: string): Promise<string[]> {
     const response = await this.send({
@@ -140,7 +140,7 @@ export class Client {
   }
 
   /**
-   * Stop all running agents. Returns the list of stopped agent names.
+   * Stop all running sessions. Returns the list of stopped session names.
    */
   async stopAll(): Promise<string[]> {
     const response = await this.send({
@@ -155,7 +155,7 @@ export class Client {
   }
 
   /**
-   * Remove an agent by name. If force is true, stops the agent first.
+   * Remove a session by name. If force is true, stops the session first.
    */
   async remove(name: string, force?: boolean): Promise<void> {
     const response = await this.send({
@@ -168,10 +168,10 @@ export class Client {
   }
 
   /**
-   * Wait for an agent to reach a terminal status (stopped, failed, blocked).
-   * Returns the agent data when it reaches a terminal state.
+   * Wait for a session to reach a terminal status (idle, failed, blocked).
+   * Returns the session data when it reaches a terminal state.
    */
-  async wait(name: string): Promise<Agent> {
+  async wait(name: string): Promise<SessionWithStatus> {
     const response = await this.send({
       command: "wait",
       args: { name },
@@ -179,13 +179,13 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "wait failed");
     }
-    return response.data as unknown as Agent;
+    return response.data as unknown as SessionWithStatus;
   }
 
   /**
-   * Query daemon for agent metadata by name. Used by `vh whoami`.
+   * Query daemon for session metadata by name. Used by `vh whoami`.
    */
-  async whoami(name: string): Promise<Agent> {
+  async whoami(name: string): Promise<SessionWithStatus> {
     const response = await this.send({
       command: "whoami",
       args: { name },
@@ -193,13 +193,13 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "whoami failed");
     }
-    return response.data as unknown as Agent;
+    return response.data as unknown as SessionWithStatus;
   }
 
   /**
-   * Get the log file path and current status for an agent.
+   * Get the log file path and current status for a session.
    */
-  async logs(name: string): Promise<{ path: string; status: AgentStatus }> {
+  async logs(name: string): Promise<{ path: string; status: SessionStatus }> {
     const response = await this.send({
       command: "logs",
       args: { name },
@@ -207,11 +207,11 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "logs failed");
     }
-    return response.data as unknown as { path: string; status: AgentStatus };
+    return response.data as unknown as { path: string; status: SessionStatus };
   }
 
   /**
-   * Show pending permission details for a blocked agent.
+   * Show pending permission details for a blocked session.
    */
   async permissionShow(name: string): Promise<Record<string, unknown>> {
     const response = await this.send({
@@ -271,7 +271,7 @@ export class Client {
   }
 
   /**
-   * Notify the daemon that an interactive agent has started.
+   * Notify the daemon that an interactive session has started.
    */
   async notifyStart(name: string): Promise<void> {
     const response = await this.send({
@@ -284,7 +284,7 @@ export class Client {
   }
 
   /**
-   * Notify the daemon that an interactive agent has exited.
+   * Notify the daemon that an interactive session has exited.
    */
   async notifyExit(name: string, exitCode: number): Promise<void> {
     const response = await this.send({

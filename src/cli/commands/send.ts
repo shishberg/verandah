@@ -4,19 +4,19 @@ import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath } from "../../lib/config.js";
 
 /**
- * `vh send` — send a message to an existing agent.
+ * `vh send` — send a message to an existing session.
  *
- * If the agent is in `created` status, starts it with the message as prompt.
- * If `stopped` or `failed`, resumes with the message.
- * If `--wait` is provided, blocks until the agent reaches a terminal status.
+ * If the session is `idle`, starts or resumes with the message.
+ * If `failed`, resumes with the message.
+ * If `--wait` is provided, blocks until the session reaches a terminal status.
  */
 export function registerSendCommand(program: Command): void {
   program
     .command("send")
-    .description("Send a message to an agent")
-    .argument("<name>", "Agent name")
+    .description("Send a message to a session")
+    .argument("<name>", "Session name")
     .argument("<message>", "Message to send (use - for stdin)")
-    .option("--wait", "Block until agent reaches terminal status")
+    .option("--wait", "Block until session reaches terminal status")
     .action(async (name: string, message: string, opts: { wait?: boolean }) => {
       try {
         // Read message from stdin if `-` is specified.
@@ -38,7 +38,7 @@ export function registerSendCommand(program: Command): void {
 
         const agent = await client.sendMessage(name, resolvedMessage);
 
-        // If --wait, block until agent reaches terminal status.
+        // If --wait, block until session reaches terminal status.
         if (opts.wait) {
           const result = await client.wait(agent.name);
           console.log(`${result.name} (${result.status})`);

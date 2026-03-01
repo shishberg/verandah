@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath } from "../../lib/config.js";
 import { parseDuration } from "../../lib/duration.js";
-import type { Agent } from "../../lib/types.js";
+import type { SessionWithStatus } from "../../lib/types.js";
 
 /**
  * Format a duration in milliseconds into a human-friendly string.
@@ -38,7 +38,7 @@ export type LogProgress = {
   turns: number;
   /** Timestamp (ms since epoch) of the first system init message, or null. */
   startedAt: number | null;
-  /** Result message data, if the agent has finished. */
+  /** Result message data, if the session has finished. */
   result: {
     isError: boolean;
     subtype: string;
@@ -129,7 +129,7 @@ export function parseLogProgress(logFilePath: string): LogProgress {
 /**
  * Print a progress status line to stderr.
  */
-function printProgress(name: string, agent: Agent, logFilePath: string): void {
+function printProgress(name: string, agent: SessionWithStatus, logFilePath: string): void {
   if (agent.status === "blocked") {
     process.stderr.write(`${name}: blocked \u2014 permission request pending\n`);
     return;
@@ -152,7 +152,7 @@ function printProgress(name: string, agent: Agent, logFilePath: string): void {
 /**
  * Print the final status line to stdout, using result data from the log.
  */
-function printFinalStatus(name: string, agent: Agent, logFilePath: string): void {
+function printFinalStatus(name: string, agent: SessionWithStatus, logFilePath: string): void {
   const progress = parseLogProgress(logFilePath);
 
   if (progress.result) {
@@ -162,7 +162,7 @@ function printFinalStatus(name: string, agent: Agent, logFilePath: string): void
     if (r.isError) {
       console.log(`${name}: failed (${r.subtype}, turns: ${r.numTurns}, cost: ${formatCost(r.totalCostUsd)}, ${durationStr})`);
     } else {
-      console.log(`${name}: stopped (turns: ${r.numTurns}, cost: ${formatCost(r.totalCostUsd)}, ${durationStr})`);
+      console.log(`${name}: idle (turns: ${r.numTurns}, cost: ${formatCost(r.totalCostUsd)}, ${durationStr})`);
     }
   } else {
     // No result message in log -- fall back to basic status.
@@ -171,21 +171,21 @@ function printFinalStatus(name: string, agent: Agent, logFilePath: string): void
 }
 
 /**
- * `vh wait` -- block until an agent reaches a terminal status.
+ * `vh wait` -- block until a session reaches a terminal status.
  *
  * Usage:
  *   vh wait <name>             -- wait indefinitely
  *   vh wait <name> --timeout 30m  -- wait up to 30 minutes
  *
  * Exit codes:
- *   0: agent reached "stopped" status
- *   1: agent reached "failed" or "blocked" status, or timeout, or error
+ *   0: session reached "idle" status (completed successfully)
+ *   1: session reached "failed" or "blocked" status, or timeout, or error
  */
 export function registerWaitCommand(program: Command): void {
   program
     .command("wait")
-    .description("Wait for an agent to reach a terminal status")
-    .argument("<name>", "Agent name")
+    .description("Wait for a session to reach a terminal status")
+    .argument("<name>", "Session name")
     .option("--timeout <duration>", "Maximum time to wait (e.g., 30m, 2h). 0 = forever.", "0")
     .action(async (name: string, opts: { timeout: string }) => {
       try {
@@ -235,7 +235,7 @@ export function registerWaitCommand(program: Command): void {
           progressInterval.unref();
         }
 
-        let agent: Agent;
+        let agent: SessionWithStatus;
 
         try {
           if (timeoutMs > 0) {
@@ -272,8 +272,8 @@ export function registerWaitCommand(program: Command): void {
           console.log(`${name}: ${agent.status}`);
         }
 
-        // Exit 0 for stopped, 1 for failed/blocked.
-        if (agent.status !== "stopped") {
+        // Exit 0 for idle (completed successfully), 1 for failed/blocked.
+        if (agent.status !== "idle") {
           process.exitCode = 1;
         }
       } catch (err) {

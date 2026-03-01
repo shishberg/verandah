@@ -1,22 +1,22 @@
 import { Command } from "commander";
 import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath } from "../../lib/config.js";
-import type { Agent } from "../../lib/types.js";
+import type { SessionWithStatus } from "../../lib/types.js";
 
 /**
- * `vh whoami` — identify the current agent.
+ * `vh whoami` — identify the current session.
  *
  * Reads VH_AGENT_NAME from the environment.
- * - `--check`: exit 0 if inside an agent (env var set), exit 1 otherwise. No daemon contact.
- * - Default: query daemon for agent metadata and print human-readable summary.
- * - `--json`: print agent record as JSON.
+ * - `--check`: exit 0 if inside a session (env var set), exit 1 otherwise. No daemon contact.
+ * - Default: query daemon for session metadata and print human-readable summary.
+ * - `--json`: print session record as JSON.
  */
 export function registerWhoamiCommand(program: Command): void {
   program
     .command("whoami")
-    .description("Identify the current agent")
+    .description("Identify the current session")
     .option("--json", "Output as JSON")
-    .option("--check", "Exit 0 if inside agent, exit 1 otherwise (no daemon contact)")
+    .option("--check", "Exit 0 if inside session, exit 1 otherwise (no daemon contact)")
     .action(async (opts: { json?: boolean; check?: boolean }) => {
       try {
         const agentName = process.env.VH_AGENT_NAME;
@@ -33,7 +33,7 @@ export function registerWhoamiCommand(program: Command): void {
 
         // Default mode: need VH_AGENT_NAME to query daemon.
         if (!agentName) {
-          process.stderr.write("not running inside a vh agent\n");
+          process.stderr.write("not running inside a vh session\n");
           process.exitCode = 1;
           return;
         }
@@ -49,7 +49,7 @@ export function registerWhoamiCommand(program: Command): void {
         if (opts.json) {
           console.log(JSON.stringify(agent, null, 2));
         } else {
-          printAgent(agent);
+          printSession(agent);
         }
       } catch (err) {
         process.stderr.write(
@@ -61,24 +61,21 @@ export function registerWhoamiCommand(program: Command): void {
 }
 
 /**
- * Print a human-readable summary of an agent.
+ * Print a human-readable summary of a session.
  */
-function printAgent(agent: Agent): void {
-  console.log(`NAME:    ${agent.name}`);
-  console.log(`STATUS:  ${agent.status}`);
-  console.log(`MODEL:   ${agent.model ?? "-"}`);
-  console.log(`CWD:     ${agent.cwd}`);
-  if (agent.prompt) {
-    console.log(`PROMPT:  ${agent.prompt}`);
+function printSession(session: SessionWithStatus): void {
+  console.log(`NAME:    ${session.name}`);
+  console.log(`STATUS:  ${session.status}`);
+  console.log(`MODEL:   ${session.model ?? "-"}`);
+  console.log(`CWD:     ${session.cwd}`);
+  if (session.prompt) {
+    console.log(`PROMPT:  ${session.prompt}`);
   }
-  if (agent.permissionMode) {
-    console.log(`PERMS:   ${agent.permissionMode}`);
+  if (session.permissionMode) {
+    console.log(`PERMS:   ${session.permissionMode}`);
   }
-  if (agent.maxTurns !== null) {
-    console.log(`TURNS:   ${agent.maxTurns}`);
+  if (session.maxTurns !== null) {
+    console.log(`TURNS:   ${session.maxTurns}`);
   }
-  console.log(`CREATED: ${agent.createdAt}`);
-  if (agent.stoppedAt) {
-    console.log(`STOPPED: ${agent.stoppedAt}`);
-  }
+  console.log(`CREATED: ${session.createdAt}`);
 }

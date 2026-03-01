@@ -32,8 +32,8 @@ export function registerPermissionCommand(program: Command): void {
   // --- show ---
   perm
     .command("show")
-    .description("Show pending permission details for an agent")
-    .argument("<name>", "Agent name")
+    .description("Show pending permission details for a session")
+    .argument("<name>", "Session name")
     .option("--json", "Output as JSON")
     .action(async (name: string, opts: { json?: boolean }) => {
       try {
@@ -56,7 +56,7 @@ export function registerPermissionCommand(program: Command): void {
               question: string;
               options?: Array<{ value: string; description?: string }>;
             }>;
-            console.log(`AGENT:    ${data.agent}`);
+            console.log(`SESSION:  ${data.agent}`);
             if (questions && questions.length > 0) {
               console.log(`QUESTION: ${questions[0].question}`);
               if (questions[0].options && questions[0].options.length > 0) {
@@ -70,7 +70,7 @@ export function registerPermissionCommand(program: Command): void {
             }
           } else {
             // Tool permission format.
-            console.log(`AGENT:    ${data.agent}`);
+            console.log(`SESSION:  ${data.agent}`);
             console.log(`TOOL:     ${data.toolName}`);
             if (toolInput.command) {
               console.log(`COMMAND:  ${toolInput.command}`);
@@ -98,8 +98,8 @@ export function registerPermissionCommand(program: Command): void {
   perm
     .command("allow")
     .description("Allow a pending permission request")
-    .argument("<name>", "Agent name")
-    .option("--wait", "Wait for agent to reach terminal status after allowing")
+    .argument("<name>", "Session name")
+    .option("--wait", "Wait for session to reach terminal status after allowing")
     .action(async (name: string, opts: { wait?: boolean }) => {
       try {
         const vhHome = resolveVHHome();
@@ -128,9 +128,9 @@ export function registerPermissionCommand(program: Command): void {
   perm
     .command("deny")
     .description("Deny a pending permission request")
-    .argument("<name>", "Agent name")
+    .argument("<name>", "Session name")
     .option("--message <message>", "Denial reason message")
-    .option("--wait", "Wait for agent to reach terminal status after denying")
+    .option("--wait", "Wait for session to reach terminal status after denying")
     .action(async (name: string, opts: { message?: string; wait?: boolean }) => {
       try {
         const vhHome = resolveVHHome();
@@ -159,9 +159,9 @@ export function registerPermissionCommand(program: Command): void {
   perm
     .command("answer")
     .description("Answer an AskUserQuestion permission request")
-    .argument("<name>", "Agent name")
+    .argument("<name>", "Session name")
     .argument("<answer>", "The answer to provide")
-    .option("--wait", "Wait for agent to reach terminal status after answering")
+    .option("--wait", "Wait for session to reach terminal status after answering")
     .action(async (name: string, answer: string, opts: { wait?: boolean }) => {
       try {
         const vhHome = resolveVHHome();
