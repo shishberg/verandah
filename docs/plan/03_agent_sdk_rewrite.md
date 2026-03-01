@@ -273,7 +273,7 @@ First end-to-end commands.
 
 ## Phase 4: New features
 
-### [ ] 14. `vh wait`
+### [x] 14. `vh wait`
 
 - `src/cli/commands/wait.ts`: `vh wait <name>` with `--timeout`
   - Sends `wait` request, blocks until response
