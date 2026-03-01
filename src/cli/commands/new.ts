@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import { Client } from "../../lib/client.js";
-import { resolveVHHome, socketPath, claudeConfigDir } from "../../lib/config.js";
+import { resolveVHHome, socketPath } from "../../lib/config.js";
 import type { NewArgs } from "../../lib/types.js";
 
 /**
@@ -141,7 +141,6 @@ async function runInteractive(
   const env = {
     ...process.env,
     VH_AGENT_NAME: name,
-    CLAUDE_CONFIG_DIR: claudeConfigDir(vhHome),
   };
 
   let exitCode = 0;

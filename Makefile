@@ -16,11 +16,12 @@ ESBUILD_FLAGS := \
 
 build:
 	npx esbuild src/cli/main.ts $(ESBUILD_FLAGS) --outfile=$(BUNDLE)
-	npx esbuild src/daemon/entry.ts $(ESBUILD_FLAGS) --outfile=$(DAEMON_BUNDLE)
+	npx esbuild src/daemon/entry.ts $(ESBUILD_FLAGS) --banner:js="delete process.env.CLAUDECODE;import{createRequire}from'module';const require=createRequire(import.meta.url);" --outfile=$(DAEMON_BUNDLE)
 	@mkdir -p bin
 	@printf '#!/usr/bin/env node\n' > $(BINARY)
 	@cat $(BUNDLE) >> $(BINARY)
 	@chmod +x $(BINARY)
+	@cp $(DAEMON_BUNDLE) bin/daemon.js
 
 test:
 	npx vitest run

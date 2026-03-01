@@ -256,6 +256,18 @@ describe("Store", () => {
     });
   });
 
+  describe("createdAt UTC suffix", () => {
+    it("returns createdAt as ISO 8601 with Z suffix", () => {
+      const agent = store.createAgent({ name: "utc-test", cwd: "/tmp" });
+      // SQLite datetime('now') returns 'YYYY-MM-DD HH:MM:SS' without Z.
+      // The store should normalize it to ISO 8601 with Z.
+      expect(agent.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+      // Parsing should give a valid UTC date.
+      const parsed = new Date(agent.createdAt);
+      expect(parsed.getTime()).not.toBeNaN();
+    });
+  });
+
   describe("status values", () => {
     const statuses: AgentStatus[] = [
       "created",

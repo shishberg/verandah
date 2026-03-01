@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   SDKMessage,
@@ -8,7 +9,18 @@ import type {
 import { ulid } from "ulid";
 import type { Store } from "../lib/store.js";
 import type { Agent, PendingPermission, PermissionResult } from "../lib/types.js";
-import { logPath, logDir, claudeConfigDir } from "../lib/config.js";
+import { fileURLToPath } from "node:url";
+import { logPath, logDir } from "../lib/config.js";
+
+/**
+ * Resolve the path to the Agent SDK's bundled CLI.
+ * The SDK's cli.js is in node_modules, one level up from our bundle in bin/ or dist/.
+ */
+function resolveClaudeCliPath(): string {
+  const thisFile = fileURLToPath(import.meta.url);
+  const projectRoot = path.dirname(path.dirname(thisFile));
+  return path.join(projectRoot, "node_modules", "@anthropic-ai", "claude-agent-sdk", "cli.js");
+}
 
 export type AgentRunnerOptions = {
   store: Store;
@@ -58,26 +70,35 @@ export class AgentRunner {
     this.store.updateAgent(agent.name, { status: "running" });
     this.onStatusChange?.(agent.name);
 
-    const response = query({
-      prompt,
-      options: {
-        cwd: agent.cwd,
-        model: agent.model ?? undefined,
-        maxTurns: agent.maxTurns ?? undefined,
-        allowedTools: parseAllowedTools(agent.allowedTools),
-        permissionMode: parsePermissionMode(agent.permissionMode),
-        abortController: this.abortController,
-        canUseTool: (toolName, toolInput) =>
-          this.handlePermission(agent.name, toolName, toolInput),
-        env: {
-          ...process.env,
-          VH_AGENT_NAME: agent.name,
-          CLAUDE_CONFIG_DIR: claudeConfigDir(this.vhHome),
+    let response: Query;
+    try {
+      response = query({
+        prompt,
+        options: {
+          cwd: agent.cwd,
+          model: agent.model ?? undefined,
+          maxTurns: agent.maxTurns ?? undefined,
+          allowedTools: parseAllowedTools(agent.allowedTools),
+          permissionMode: parsePermissionMode(agent.permissionMode),
+          abortController: this.abortController,
+          canUseTool: (toolName, toolInput) =>
+            this.handlePermission(agent.name, toolName, toolInput),
+          env: buildAgentEnv(agent.name),
+          settingSources: ["project"],
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          pathToClaudeCodeExecutable: resolveClaudeCliPath(),
+          stderr: (data) => {
+            process.stderr.write(`agent-runner [${agent.name}] stderr: ${data}\n`);
+          },
         },
-        settingSources: ["project"],
-        systemPrompt: { type: "preset", preset: "claude_code" },
-      },
-    });
+      });
+    } catch (err) {
+      process.stderr.write(`agent-runner [${agent.name}]: query() failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      this.store.updateAgent(agent.name, { status: "failed", stoppedAt: new Date().toISOString() });
+      this.onStatusChange?.(agent.name);
+      this.onDone?.(agent.name);
+      return;
+    }
 
     this.queryPromise = this.run(agent.name, response);
   }
@@ -92,27 +113,36 @@ export class AgentRunner {
     this.store.updateAgent(agent.name, { status: "running" });
     this.onStatusChange?.(agent.name);
 
-    const response = query({
-      prompt: message,
-      options: {
-        resume: agent.sessionId ?? undefined,
-        cwd: agent.cwd,
-        model: agent.model ?? undefined,
-        maxTurns: agent.maxTurns ?? undefined,
-        allowedTools: parseAllowedTools(agent.allowedTools),
-        permissionMode: parsePermissionMode(agent.permissionMode),
-        abortController: this.abortController,
-        canUseTool: (toolName, toolInput) =>
-          this.handlePermission(agent.name, toolName, toolInput),
-        env: {
-          ...process.env,
-          VH_AGENT_NAME: agent.name,
-          CLAUDE_CONFIG_DIR: claudeConfigDir(this.vhHome),
+    let response: Query;
+    try {
+      response = query({
+        prompt: message,
+        options: {
+          resume: agent.sessionId ?? undefined,
+          cwd: agent.cwd,
+          model: agent.model ?? undefined,
+          maxTurns: agent.maxTurns ?? undefined,
+          allowedTools: parseAllowedTools(agent.allowedTools),
+          permissionMode: parsePermissionMode(agent.permissionMode),
+          abortController: this.abortController,
+          canUseTool: (toolName, toolInput) =>
+            this.handlePermission(agent.name, toolName, toolInput),
+          env: buildAgentEnv(agent.name),
+          settingSources: ["project"],
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          pathToClaudeCodeExecutable: resolveClaudeCliPath(),
+          stderr: (data) => {
+            process.stderr.write(`agent-runner [${agent.name}] stderr: ${data}\n`);
+          },
         },
-        settingSources: ["project"],
-        systemPrompt: { type: "preset", preset: "claude_code" },
-      },
-    });
+      });
+    } catch (err) {
+      process.stderr.write(`agent-runner [${agent.name}]: query() failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      this.store.updateAgent(agent.name, { status: "failed", stoppedAt: new Date().toISOString() });
+      this.onStatusChange?.(agent.name);
+      this.onDone?.(agent.name);
+      return;
+    }
 
     this.queryPromise = this.run(agent.name, response);
   }
@@ -191,7 +221,12 @@ export class AgentRunner {
         });
         this.onStatusChange?.(agentName);
       }
-    } catch {
+    } catch (err) {
+      // Log the error for debugging.
+      const errMsg = err instanceof Error ? err.stack ?? err.message : String(err);
+      if (!(err instanceof Error && err.name === "AbortError")) {
+        process.stderr.write(`agent-runner [${agentName}]: ${errMsg}\n`);
+      }
       // On error (including AbortError), mark as stopped.
       const agent = this.store.getAgent(agentName);
       if (agent && agent.status !== "stopped" && agent.status !== "failed") {
@@ -257,6 +292,21 @@ export class AgentRunner {
     const filePath = logPath(agentName, this.vhHome);
     fs.appendFileSync(filePath, JSON.stringify(message) + "\n");
   }
+}
+
+/**
+ * Build the environment for an agent process.
+ * Strips CLAUDECODE and CLAUDE_CODE_ENTRYPOINT to prevent nested session detection.
+ */
+function buildAgentEnv(agentName: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key !== "CLAUDECODE" && key !== "CLAUDE_CODE_ENTRYPOINT" && value !== undefined) {
+      env[key] = value;
+    }
+  }
+  env.VH_AGENT_NAME = agentName;
+  return env;
 }
 
 /**

@@ -7,7 +7,6 @@ import {
   dbPath,
   logDir,
   logPath,
-  claudeConfigDir,
 } from "./config.js";
 
 describe("config", () => {
@@ -85,14 +84,4 @@ describe("config", () => {
     });
   });
 
-  describe("claudeConfigDir", () => {
-    it("uses explicit vhHome argument", () => {
-      expect(claudeConfigDir("/my/home")).toBe("/my/home/.claude");
-    });
-
-    it("falls back to resolveVHHome when no argument", () => {
-      process.env.VH_HOME = "/env/home";
-      expect(claudeConfigDir()).toBe("/env/home/.claude");
-    });
-  });
 });

@@ -30,8 +30,3 @@ export function logDir(vhHome?: string): string {
 export function logPath(name: string, vhHome?: string): string {
   return path.join(logDir(vhHome), `${name}.log`);
 }
-
-/** Path to the isolated Claude config directory. */
-export function claudeConfigDir(vhHome?: string): string {
-  return path.join(vhHome ?? resolveVHHome(), ".claude");
-}

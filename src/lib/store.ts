@@ -48,6 +48,15 @@ export type UpdateAgentFields = {
   stoppedAt?: string | null;
 };
 
+/**
+ * Ensure a datetime string from SQLite has a UTC 'Z' suffix.
+ * SQLite's datetime('now') returns 'YYYY-MM-DD HH:MM:SS' (UTC but no suffix).
+ */
+function ensureUtcSuffix(dt: string): string {
+  if (dt.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(dt)) return dt;
+  return dt.replace(" ", "T") + "Z";
+}
+
 /** Map a snake_case DB row to a camelCase Agent object. */
 function rowToAgent(row: Record<string, unknown>): Agent {
   return {
@@ -61,7 +70,7 @@ function rowToAgent(row: Record<string, unknown>): Agent {
     permissionMode: (row.permission_mode as string | null) ?? null,
     maxTurns: (row.max_turns as number | null) ?? null,
     allowedTools: (row.allowed_tools as string | null) ?? null,
-    createdAt: row.created_at as string,
+    createdAt: ensureUtcSuffix(row.created_at as string),
     stoppedAt: (row.stopped_at as string | null) ?? null,
   };
 }

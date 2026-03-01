@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Daemon } from "./daemon.js";
 import { socketPath as defaultSocketPath } from "../lib/config.js";
 
@@ -56,6 +58,17 @@ function parseArgs(argv: string[]): {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
+
+  // Strip CLAUDECODE to prevent the Agent SDK from detecting a nested session.
+  // The daemon is spawned by the CLI which may run inside Claude Code.
+  delete process.env.CLAUDECODE;
+
+  // Redirect stdout/stderr to a log file in VH_HOME.
+  const logFile = path.join(args.vhHome, "daemon.log");
+  fs.mkdirSync(args.vhHome, { recursive: true });
+  const logStream = fs.createWriteStream(logFile, { flags: "a" });
+  process.stdout.write = logStream.write.bind(logStream);
+  process.stderr.write = logStream.write.bind(logStream);
 
   const daemon = new Daemon(args.vhHome, {
     idleTimeout: args.idleTimeout,
