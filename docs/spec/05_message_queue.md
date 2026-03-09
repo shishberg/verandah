@@ -1,6 +1,6 @@
 # Message Queue — Specification
 
-Per-session message queue for fire-and-forget delivery. When `vh send` targets a session with an active query, the message is queued and delivered automatically when the current query finishes. A configurable dead-letter session (DLQ) receives messages that can't be delivered.
+Per-session message queue for fire-and-forget delivery. When `vh send` targets a session with an active query, the message is queued and delivered automatically when the current query finishes.
 
 Reference: [Design](../design/05_message_queue.md) | [Sessions Spec](04_sessions_and_runs.md)
 
@@ -33,7 +33,7 @@ CREATE INDEX idx_queued_messages_session ON queued_messages(session, created_at)
 | `id` | Unique identifier (UUIDv7). Returned to the caller on enqueue. |
 | `session` | Target session name. Foreign key to `sessions.name`. |
 | `message` | The message text to deliver as a prompt. |
-| `created_at` | When the message was enqueued. Used for FIFO ordering and timeout sweeps. |
+| `created_at` | When the message was enqueued. Used for FIFO ordering. |
 
 ### Migration (v2 → v3)
 
@@ -68,25 +68,9 @@ export type QueuedMessage = {
 
 ### Command types
 
-```typescript
-export type CommandName =
-  | "new"
-  | "list"
-  | "send"
-  | "stop"
-  | "rm"
-  | "logs"
-  | "whoami"
-  | "ping"
-  | "daemon"
-  | "wait"
-  | "permission"
-  | "notify-start"
-  | "notify-exit"
-  | "queue-list"
-  | "queue-delete"
-  | "queue-assign";
+New command names added to `CommandName`: `"queue-list"`, `"queue-delete"`, `"queue-assign"`.
 
+```typescript
 export type QueueListArgs = {
   session?: string;
 };
@@ -97,20 +81,11 @@ export type QueueDeleteArgs = {
 
 export type QueueAssignArgs = {
   id?: string;
-  session?: string;
+  fromSession?: string;
+  toSession: string;
   all?: boolean;
 };
 ```
-
----
-
-## Configuration
-
-### `VH_DLQ_SESSION`
-
-Environment variable specifying the session name that receives undeliverable messages. If unset, messages that would go to the DLQ are logged as warnings and remain in the queue.
-
-The DLQ session is a normal session — it must be created with `vh new` like any other. The daemon does not create it automatically.
 
 ---
 
@@ -130,9 +105,17 @@ Return and delete the oldest queued message for the given session (`ORDER BY cre
 
 Return all queued messages, optionally filtered by session name. Ordered by `created_at ASC`.
 
+**`countQueuedMessages(session): number`**
+
+Return the number of queued messages for a session.
+
 **`deleteQueuedMessage(id): boolean`**
 
 Delete a single queued message by ID. Returns true if a row was deleted.
+
+**`deleteQueuedMessagesForSession(session): number`**
+
+Delete all queued messages for a session. Returns the number of rows deleted.
 
 **`reassignQueuedMessages(fromSession, toSession): number`**
 
@@ -142,9 +125,11 @@ Update all queued messages for `fromSession` to target `toSession`. Returns the 
 
 Update a single queued message to target `toSession`. Returns true if a row was updated.
 
-**`expiredQueuedMessages(maxAgeMs): QueuedMessage[]`**
+### Changed methods
 
-Return all queued messages older than `maxAgeMs` milliseconds.
+**`deleteSession(name): boolean`**
+
+Unchanged signature. Wraps in a transaction: deletes all `queued_messages` rows for the session, then deletes the session row. Returns true if the session was deleted.
 
 ---
 
@@ -160,29 +145,6 @@ When a query finishes (runner removed from `activeQueries` via `onDone` callback
 
 This creates a loop: query finishes → dequeue → new query → finishes → dequeue → ... until the queue is empty.
 
-### DLQ delivery
-
-Messages are moved to the DLQ session's queue when:
-
-- **Target removed.** `vh rm` calls `store.reassignQueuedMessages(name, dlqSession)` before deleting the session.
-- **No recipient.** `vh send` with no session name enqueues directly to the DLQ session.
-- **Timeout.** The daemon runs a periodic sweep (every 60 seconds) calling `store.expiredQueuedMessages(maxAgeMs)`. Expired messages are reassigned to the DLQ session. Default timeout: 1 hour. Configurable via `VH_QUEUE_TIMEOUT` (duration string, e.g. `30m`, `2h`). Set to `0` to disable timeout.
-
-When reassigning to the DLQ, the daemon prepends context to the message:
-
-- Target removed: `[undeliverable: session '<name>' was removed]\n\n<original message>`
-- Timeout: `[undeliverable: queued for session '<name>' for >1h]\n\n<original message>`
-
-If `VH_DLQ_SESSION` is not set, undeliverable messages are logged as warnings and left in the queue. If `VH_DLQ_SESSION` is set but the session does not exist, messages are left in the queue and a warning is logged. When the DLQ session is created, the next sweep or `vh rm` will deliver them.
-
-### Queue drain on session creation
-
-When a session is created (`vh new`), the daemon checks if there are any queued messages targeting that session name (e.g., messages reassigned to a DLQ session that was just created). If so, and the session has a `--prompt`, the prompt is processed first, then the queue drains normally. If the session has no prompt, the first queued message is dequeued and starts a query immediately.
-
-### Idle shutdown
-
-The idle timeout resets when there are queued messages for any session, even if no queries are active. The daemon should not shut down while messages are waiting for delivery.
-
 ---
 
 ## CLI Commands
@@ -191,15 +153,12 @@ The idle timeout resets when there are queued messages for any session, even if 
 
 **New behaviour when session is busy:**
 
-1. Daemon checks derived status for the target session.
-2. If `running` or `blocked`: the message is enqueued via `store.enqueueMessage()`. The daemon responds with `{ ok: true, data: { queued: true, messageId: "<ulid>" } }`.
-3. If `idle` or `failed`: query starts immediately, as before. The daemon responds with `{ ok: true, data: { queued: false } }`.
+`vh send` requires a session name (unchanged).
 
-**No recipient:**
-
-`vh send "do X"` (no session name) routes to the DLQ session. If `VH_DLQ_SESSION` is not set, fail with `no default session configured. Set VH_DLQ_SESSION or specify a session name.`
-
-If the DLQ session is idle, the message starts a query. If the DLQ session is busy, the message is queued.
+1. Daemon looks up session. If not found: fail with `session '<name>' not found`.
+2. Daemon checks derived status for the target session.
+3. If `running` or `blocked`: the message is enqueued via `store.enqueueMessage()`. The daemon responds with `{ ok: true, data: { queued: true, messageId: "<id>" } }`.
+4. If `idle` or `failed`: query starts immediately, as before. The daemon responds with `{ ok: true, data: { queued: false } }`.
 
 **`--wait` with queued messages:**
 
@@ -209,12 +168,11 @@ If the DLQ session is idle, the message starts a query. If the DLQ session is bu
 
 - Delivered immediately: `message sent to '<name>'` (unchanged).
 - Queued: `message queued for '<name>' (queue depth: <n>)`.
-- No recipient: `message sent to '<dlq-session-name>'` or `message queued for '<dlq-session-name>' (queue depth: <n>)`.
 
 **Exit codes:**
 
 - 0: Message sent or queued.
-- 1: Error (session not found, no DLQ configured for bare send, daemon unreachable).
+- 1: Error (session not found, daemon unreachable).
 - 2: Missing arguments.
 
 ### `vh ls` (changed)
@@ -234,16 +192,15 @@ The `QUEUE` column shows the number of queued messages for each session. Shows `
 
 ### `vh rm` (changed)
 
-**New behaviour: queued message reassignment.**
+**New behaviour: queued messages.**
 
-Before deleting the session:
-1. If the session has queued messages and `VH_DLQ_SESSION` is set: reassign all queued messages to the DLQ session (with `[undeliverable: ...]` preamble).
-2. If the session has queued messages and `VH_DLQ_SESSION` is not set: fail with `session '<name>' has <n> queued message(s). Set VH_DLQ_SESSION or use 'vh queue assign' to reassign them first.`
-3. If the session has no queued messages: delete as before.
+Without `--force`:
+1. If the session has queued messages: fail with `session '<name>' has <n> queued message(s). Use 'vh queue assign' to reassign them or --force to delete them.`
+2. If the session has no queued messages: delete as before.
 
-This applies to both normal `vh rm` and `vh rm --force`.
+With `--force`: stops the active query (if any), deletes all queued messages and the session in a single transaction.
 
-**Output:** When messages are reassigned, print `reassigned <n> queued message(s) to '<dlq-session>'` before `removed session '<name>'`.
+**Output:** When messages are force-deleted: `deleted <n> queued message(s)` before `removed session '<name>'`.
 
 ### `vh stop` (unchanged)
 
@@ -268,10 +225,10 @@ vh queue ls [session]
 **Output:**
 
 ```
-ID                          SESSION   MESSAGE                  AGE
-01JQXYZ...                  alpha     fix the frob warble      3m
-01JQXYZ...                  alpha     also check the woogle    1m
-01JQXYZ...                  triage    update the docs          5m
+ID                                    SESSION   MESSAGE                  AGE
+019606a3-b1c2-7def-8abc-123456789012  alpha     fix the frob warble      3m
+019606a3-c2d3-7ef0-9bcd-234567890123  alpha     also check the woogle    1m
+019606a3-d3e4-7f01-abcd-345678901234  triage    update the docs          5m
 ```
 
 - `MESSAGE` is truncated to fit terminal width.
@@ -311,38 +268,36 @@ vh queue delete <messageID>
 
 ### `vh queue assign`
 
-Reassign a queued message to a different session, or to the DLQ.
+Reassign queued messages to a different session.
 
 **Usage:**
 
 ```
-vh queue assign <messageID> [session]
-vh queue assign --all [session]
+vh queue assign <messageID> <toSession>
+vh queue assign --all <fromSession> <toSession>
 ```
 
 **Behaviour:**
 
 **Single message:**
-1. If session name provided: reassign message to that session via `store.reassignQueuedMessage(id, session)`.
-2. If no session name: reassign to the DLQ session. Fail if `VH_DLQ_SESSION` is not set.
-3. If message not found: fail with `queued message '<id>' not found`.
-4. If target session not found: fail with `session '<session>' not found`.
+1. Reassign message to the target session via `store.reassignQueuedMessage(id, session)`.
+2. If message not found: fail with `queued message '<id>' not found`.
+3. If target session not found: fail with `session '<session>' not found`.
 
-**All messages (`--all`):**
-1. Reassign all queued messages (across all sessions) to the specified session, or to the DLQ if no session specified.
-2. Uses `store.reassignQueuedMessages()` for each source session.
+**All messages for a session (`--all <fromSession> <toSession>`):**
+1. Reassign all queued messages for `fromSession` to `toSession`.
 
-After reassignment, the daemon checks if the target session is idle. If so, it dequeues the first message and starts a query.
+After reassignment, the daemon checks if the target session is idle. If so, it dequeues the first message and starts a query. If the target session is busy, the messages wait in its queue and drain normally when the current query finishes.
 
 **Output:**
 
-- Single: `assigned message '<id>' to '<session>'`.
-- All: `assigned <n> message(s) to '<session>'`.
+- Single: `assigned message '<id>' to '<toSession>'`.
+- All: `assigned <n> message(s) from '<fromSession>' to '<toSession>'`.
 
 **Exit codes:**
 
 - 0: Message(s) reassigned.
-- 1: Error (message not found, session not found, no DLQ configured, daemon unreachable).
+- 1: Error (message not found, session not found, daemon unreachable).
 
 ---
 
@@ -365,21 +320,20 @@ Response:
 **`queue-delete`:**
 
 ```json
-{"command": "queue-delete", "args": {"id": "01JQXYZ..."}}
+{"command": "queue-delete", "args": {"id": "019606a3-..."}}
 ```
 
 Response:
 ```json
 {"ok": true}
-{"ok": false, "error": "queued message '01JQXYZ...' not found"}
+{"ok": false, "error": "queued message '019606a3-...' not found"}
 ```
 
 **`queue-assign`:**
 
 ```json
-{"command": "queue-assign", "args": {"id": "01JQXYZ...", "session": "beta"}}
-{"command": "queue-assign", "args": {"all": true, "session": "triage"}}
-{"command": "queue-assign", "args": {"id": "01JQXYZ..."}}
+{"command": "queue-assign", "args": {"id": "019606a3-...", "toSession": "beta"}}
+{"command": "queue-assign", "args": {"all": true, "fromSession": "alpha", "toSession": "triage"}}
 ```
 
 Response:
@@ -393,7 +347,7 @@ Response:
 
 ```json
 {"ok": true, "data": {"queued": false, "name": "alpha", "status": "running"}}
-{"ok": true, "data": {"queued": true, "messageId": "01JQXYZ...", "name": "alpha", "status": "running", "queueDepth": 3}}
+{"ok": true, "data": {"queued": true, "messageId": "019606a3-...", "name": "alpha", "status": "running", "queueDepth": 3}}
 ```
 
 **`list` response** gains `queue_depth` field on each session:
@@ -411,10 +365,12 @@ Response:
 - `enqueueMessage`: verify UUIDv7 generation, correct session/message storage.
 - `dequeueMessage`: verify FIFO order, atomic delete, returns null on empty queue.
 - `listQueuedMessages`: with and without session filter.
+- `countQueuedMessages`: correct count.
 - `deleteQueuedMessage`: found and not-found cases.
+- `deleteQueuedMessagesForSession`: deletes all, returns count.
 - `reassignQueuedMessages`: verify all messages move, count returned.
 - `reassignQueuedMessage`: single message, found and not-found.
-- `expiredQueuedMessages`: verify age threshold.
+- `deleteSession`: cascades to queued messages.
 
 ### Queue drain tests
 
@@ -422,21 +378,17 @@ Response:
 - Multiple queued messages → drained in FIFO order.
 - Queue drain loop terminates when queue is empty.
 
-### DLQ tests
-
-- `vh rm` with queued messages and DLQ set → messages reassigned with preamble.
-- `vh rm` with queued messages and no DLQ → error.
-- Timeout sweep → expired messages moved to DLQ.
-- DLQ session doesn't exist → messages stay in queue with warning.
-- DLQ session created → messages drain to it.
-
 ### `vh send` tests
 
 - Send to idle session → immediate delivery (unchanged behaviour).
-- Send to running session → queued, correct response.
-- Send with no recipient and DLQ set → routes to DLQ.
-- Send with no recipient and no DLQ → error.
+- Send to running session → queued, correct response with message ID and queue depth.
 - `--wait` on queued message → blocks until that message's query completes.
+
+### `vh rm` tests
+
+- `vh rm` with queued messages → error, requires `--force`.
+- `vh rm --force` with queued messages → deletes messages and session.
+- `vh rm` with no queued messages → deletes as before.
 
 ### `vh ls` tests
 
@@ -447,5 +399,5 @@ Response:
 
 - `vh queue ls` with and without session filter.
 - `vh queue delete` found and not-found.
-- `vh queue assign` single and `--all`, with and without explicit session.
+- `vh queue assign` single and `--all`.
 - Reassignment triggers drain if target is idle.
