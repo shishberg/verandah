@@ -208,7 +208,7 @@ Implementation notes: Renamed `drainQueue` to `tryDrain` and made it public so b
 
 ## Phase 4: Integration
 
-### [ ] 10. End-to-end queue smoke test
+### [x] 10. End-to-end queue smoke test
 
 Integration test exercising the full queue workflow with mocked SDK.
 
@@ -226,3 +226,5 @@ Integration test exercising the full queue workflow with mocked SDK.
 - Test `vh rm` with queued messages → error.
 - Test `vh rm --force` → deletes messages and session.
 - Test `vh queue assign` → reassign and drain.
+
+Implementation notes: Created `src/daemon/queue.integration.test.ts` with 5 integration tests covering the full queue workflow. Tests use controllable async generators (with abort signal support for `rm --force` scenarios) and the `Client` convenience methods. Test coverage includes: (1) full queue lifecycle with 3-message FIFO drain, verifying queue depth, queue ls filtering, and SDK call order; (2) `rm` on running session with queued messages errors without `--force`; (3) `rm --force` deletes queued messages and session; (4) `rm` on idle session with queued messages errors without `--force`; (5) single `queue assign` to idle target triggers drain; (6) `queue assign --all` bulk reassignment with drain.
