@@ -15,7 +15,10 @@ export type CommandName =
   | "permission"
   | "notify-start"
   | "notify-exit"
-  | "shutdown";
+  | "shutdown"
+  | "queue-list"
+  | "queue-delete"
+  | "queue-assign";
 
 // Request sent from client to daemon over the unix socket.
 export type Request = {
@@ -98,6 +101,21 @@ export type NotifyExitArgs = {
   exitCode: number;
 };
 
+export type QueueListArgs = {
+  session?: string;
+};
+
+export type QueueDeleteArgs = {
+  id: string;
+};
+
+export type QueueAssignArgs = {
+  id?: string;
+  fromSession?: string;
+  toSession: string;
+  all?: boolean;
+};
+
 // --- Runtime types ---
 
 // A pending permission request held in memory by the daemon.
@@ -115,6 +133,15 @@ export type PendingPermission = {
   toolInput: Record<string, unknown>;
   resolve: (result: PermissionResult) => void;
   createdAt: Date;
+};
+
+// --- Queue types ---
+
+export type QueuedMessage = {
+  id: string;
+  session: string;
+  message: string;
+  createdAt: string;
 };
 
 // --- Session types ---

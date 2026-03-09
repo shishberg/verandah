@@ -17,7 +17,7 @@ Every task must leave the codebase in a stable state with passing tests.
 
 ## Phase 1: Store layer
 
-### [ ] 1. Schema migration and queue store methods
+### [x] 1. Schema migration and queue store methods
 
 Add the `queued_messages` table and all store methods.
 

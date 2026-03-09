@@ -33,7 +33,7 @@ describe("Store", () => {
       store2.close();
     });
 
-    it("migrates v1 database to v3 via v2", () => {
+    it("migrates v1 database to v4 via v2 and v3", () => {
       // Create a real v1 database on disk.
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-store-test-"));
       const dbPath = path.join(tmpDir, "test.db");
@@ -66,7 +66,7 @@ describe("Store", () => {
         ).run();
         db.close();
 
-        // Open with Store — should run v2 and v3 migrations.
+        // Open with Store — should run v2, v3, and v4 migrations.
         const store2 = new Store(dbPath);
         const session = store2.getSession("old-agent");
         expect(session).not.toBeNull();
@@ -78,10 +78,10 @@ describe("Store", () => {
         store2.updateSession("old-agent", { lastError: "error_max_turns" });
         expect(store2.getSession("old-agent")!.lastError).toBe("error_max_turns");
 
-        // Verify schema version is 3.
+        // Verify schema version is 4.
         const db2 = new Database(dbPath);
         const version = db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number };
-        expect(version.version).toBe(3);
+        expect(version.version).toBe(4);
 
         // Verify sessions table exists and agents table does not.
         const tables = db2.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
@@ -96,7 +96,7 @@ describe("Store", () => {
       }
     });
 
-    it("migrates v2 database to v3", () => {
+    it("migrates v2 database to v4 via v3", () => {
       // Create a real v2 database on disk.
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-store-test-"));
       const dbPath = path.join(tmpDir, "test.db");
@@ -133,7 +133,7 @@ describe("Store", () => {
         ).run();
         db.close();
 
-        // Open with Store — should run v3 migration.
+        // Open with Store — should run v3 and v4 migrations.
         const store2 = new Store(dbPath);
 
         // Verify both sessions migrated correctly.
@@ -152,10 +152,10 @@ describe("Store", () => {
         const all = store2.listSessions();
         expect(all).toHaveLength(2);
 
-        // Verify schema version is 3.
+        // Verify schema version is 4.
         const db2 = new Database(dbPath);
         const version = db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number };
-        expect(version.version).toBe(3);
+        expect(version.version).toBe(4);
 
         // Verify sessions table exists and agents table does not.
         const tables = db2.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
@@ -404,6 +404,333 @@ describe("Store", () => {
       // Parsing should give a valid UTC date.
       const parsed = new Date(session.createdAt);
       expect(parsed.getTime()).not.toBeNaN();
+    });
+  });
+
+  describe("enqueueMessage", () => {
+    it("creates a queued message with UUIDv7 id", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      const msg = store.enqueueMessage("alpha", "hello world");
+
+      expect(msg.id).toHaveLength(36);
+      expect(msg.session).toBe("alpha");
+      expect(msg.message).toBe("hello world");
+      expect(msg.createdAt).toBeTruthy();
+      expect(msg.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    });
+
+    it("generates unique ids for each message", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      const a = store.enqueueMessage("alpha", "msg 1");
+      const b = store.enqueueMessage("alpha", "msg 2");
+      expect(a.id).not.toBe(b.id);
+    });
+  });
+
+  describe("dequeueMessage", () => {
+    it("returns messages in FIFO order", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "first");
+      store.enqueueMessage("alpha", "second");
+      store.enqueueMessage("alpha", "third");
+
+      const m1 = store.dequeueMessage("alpha");
+      expect(m1).not.toBeNull();
+      expect(m1!.message).toBe("first");
+
+      const m2 = store.dequeueMessage("alpha");
+      expect(m2).not.toBeNull();
+      expect(m2!.message).toBe("second");
+
+      const m3 = store.dequeueMessage("alpha");
+      expect(m3).not.toBeNull();
+      expect(m3!.message).toBe("third");
+    });
+
+    it("atomically deletes the dequeued message", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "only one");
+
+      const msg = store.dequeueMessage("alpha");
+      expect(msg).not.toBeNull();
+      expect(msg!.message).toBe("only one");
+
+      // Queue should now be empty.
+      expect(store.countQueuedMessages("alpha")).toBe(0);
+    });
+
+    it("returns null when queue is empty", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      const msg = store.dequeueMessage("alpha");
+      expect(msg).toBeNull();
+    });
+
+    it("only dequeues from the specified session", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "alpha msg");
+      store.enqueueMessage("beta", "beta msg");
+
+      const msg = store.dequeueMessage("alpha");
+      expect(msg).not.toBeNull();
+      expect(msg!.session).toBe("alpha");
+      expect(msg!.message).toBe("alpha msg");
+
+      // beta's message is still there.
+      expect(store.countQueuedMessages("beta")).toBe(1);
+    });
+  });
+
+  describe("listQueuedMessages", () => {
+    it("lists all queued messages across sessions", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "msg a");
+      store.enqueueMessage("beta", "msg b");
+
+      const all = store.listQueuedMessages();
+      expect(all).toHaveLength(2);
+    });
+
+    it("filters by session when provided", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "msg a");
+      store.enqueueMessage("beta", "msg b");
+
+      const alphaOnly = store.listQueuedMessages("alpha");
+      expect(alphaOnly).toHaveLength(1);
+      expect(alphaOnly[0].session).toBe("alpha");
+    });
+
+    it("returns messages ordered by created_at ASC", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "first");
+      store.enqueueMessage("alpha", "second");
+      store.enqueueMessage("alpha", "third");
+
+      const msgs = store.listQueuedMessages("alpha");
+      expect(msgs[0].message).toBe("first");
+      expect(msgs[1].message).toBe("second");
+      expect(msgs[2].message).toBe("third");
+    });
+
+    it("returns empty list when no messages", () => {
+      const msgs = store.listQueuedMessages();
+      expect(msgs).toHaveLength(0);
+    });
+  });
+
+  describe("countQueuedMessages", () => {
+    it("returns correct count", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      expect(store.countQueuedMessages("alpha")).toBe(0);
+
+      store.enqueueMessage("alpha", "msg 1");
+      expect(store.countQueuedMessages("alpha")).toBe(1);
+
+      store.enqueueMessage("alpha", "msg 2");
+      expect(store.countQueuedMessages("alpha")).toBe(2);
+    });
+
+    it("returns 0 for a session with no messages", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      expect(store.countQueuedMessages("alpha")).toBe(0);
+    });
+  });
+
+  describe("deleteQueuedMessage", () => {
+    it("deletes an existing message and returns true", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      const msg = store.enqueueMessage("alpha", "doomed");
+
+      const deleted = store.deleteQueuedMessage(msg.id);
+      expect(deleted).toBe(true);
+      expect(store.countQueuedMessages("alpha")).toBe(0);
+    });
+
+    it("returns false for a non-existent message", () => {
+      const deleted = store.deleteQueuedMessage("non-existent-id");
+      expect(deleted).toBe(false);
+    });
+  });
+
+  describe("deleteQueuedMessagesForSession", () => {
+    it("deletes all messages for a session and returns count", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "msg 1");
+      store.enqueueMessage("alpha", "msg 2");
+      store.enqueueMessage("alpha", "msg 3");
+
+      const count = store.deleteQueuedMessagesForSession("alpha");
+      expect(count).toBe(3);
+      expect(store.countQueuedMessages("alpha")).toBe(0);
+    });
+
+    it("returns 0 when no messages exist", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      const count = store.deleteQueuedMessagesForSession("alpha");
+      expect(count).toBe(0);
+    });
+
+    it("only deletes messages for the specified session", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "alpha msg");
+      store.enqueueMessage("beta", "beta msg");
+
+      const count = store.deleteQueuedMessagesForSession("alpha");
+      expect(count).toBe(1);
+      expect(store.countQueuedMessages("beta")).toBe(1);
+    });
+  });
+
+  describe("reassignQueuedMessages", () => {
+    it("moves all messages from one session to another", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "msg 1");
+      store.enqueueMessage("alpha", "msg 2");
+
+      const count = store.reassignQueuedMessages("alpha", "beta");
+      expect(count).toBe(2);
+      expect(store.countQueuedMessages("alpha")).toBe(0);
+      expect(store.countQueuedMessages("beta")).toBe(2);
+    });
+
+    it("returns 0 when no messages to reassign", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      const count = store.reassignQueuedMessages("alpha", "beta");
+      expect(count).toBe(0);
+    });
+
+    it("preserves message order after reassignment", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "first");
+      store.enqueueMessage("alpha", "second");
+
+      store.reassignQueuedMessages("alpha", "beta");
+      const msgs = store.listQueuedMessages("beta");
+      expect(msgs[0].message).toBe("first");
+      expect(msgs[1].message).toBe("second");
+    });
+  });
+
+  describe("reassignQueuedMessage", () => {
+    it("moves a single message to a different session", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      const msg = store.enqueueMessage("alpha", "reassign me");
+
+      const updated = store.reassignQueuedMessage(msg.id, "beta");
+      expect(updated).toBe(true);
+      expect(store.countQueuedMessages("alpha")).toBe(0);
+      expect(store.countQueuedMessages("beta")).toBe(1);
+
+      const betaMsgs = store.listQueuedMessages("beta");
+      expect(betaMsgs[0].message).toBe("reassign me");
+    });
+
+    it("returns false for a non-existent message", () => {
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      const updated = store.reassignQueuedMessage("non-existent-id", "beta");
+      expect(updated).toBe(false);
+    });
+  });
+
+  describe("deleteSession with queued messages", () => {
+    it("cascades delete to queued messages", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "msg 1");
+      store.enqueueMessage("alpha", "msg 2");
+
+      const deleted = store.deleteSession("alpha");
+      expect(deleted).toBe(true);
+      // Queued messages should be gone too.
+      expect(store.listQueuedMessages("alpha")).toHaveLength(0);
+    });
+
+    it("does not affect queued messages for other sessions", () => {
+      store.createSession({ name: "alpha", cwd: "/tmp" });
+      store.createSession({ name: "beta", cwd: "/tmp" });
+      store.enqueueMessage("alpha", "alpha msg");
+      store.enqueueMessage("beta", "beta msg");
+
+      store.deleteSession("alpha");
+      expect(store.countQueuedMessages("beta")).toBe(1);
+    });
+  });
+
+  describe("migration v3 to v4", () => {
+    it("creates queued_messages table and index on existing v3 database", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-store-test-"));
+      const dbPath = path.join(tmpDir, "test.db");
+
+      try {
+        // Create a v3 database manually.
+        const db = new Database(dbPath);
+        db.exec(`
+          CREATE TABLE schema_version (version INTEGER NOT NULL);
+          INSERT INTO schema_version (version) VALUES (3);
+
+          CREATE TABLE sessions (
+            id              TEXT PRIMARY KEY,
+            name            TEXT UNIQUE NOT NULL,
+            session_id      TEXT,
+            model           TEXT,
+            cwd             TEXT NOT NULL,
+            prompt          TEXT,
+            permission_mode TEXT,
+            max_turns       INTEGER,
+            allowed_tools   TEXT,
+            last_error      TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+        `);
+        db.prepare(
+          "INSERT INTO sessions (id, name, cwd) VALUES ('id1', 'test-session', '/tmp')",
+        ).run();
+        db.close();
+
+        // Open with Store — should run v4 migration.
+        const store2 = new Store(dbPath);
+
+        // Verify schema version is 4.
+        const db2 = new Database(dbPath);
+        const version = db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number };
+        expect(version.version).toBe(4);
+
+        // Verify queued_messages table exists.
+        const tables = db2.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+        ).all() as { name: string }[];
+        const tableNames = tables.map((t) => t.name);
+        expect(tableNames).toContain("queued_messages");
+
+        // Verify index exists.
+        const indexes = db2.prepare(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_queued_messages_session'",
+        ).all() as { name: string }[];
+        expect(indexes).toHaveLength(1);
+
+        db2.close();
+
+        // Verify existing session still works.
+        const session = store2.getSession("test-session");
+        expect(session).not.toBeNull();
+        expect(session!.name).toBe("test-session");
+
+        // Verify we can enqueue messages.
+        const msg = store2.enqueueMessage("test-session", "hello after migration");
+        expect(msg.message).toBe("hello after migration");
+        expect(msg.session).toBe("test-session");
+
+        store2.close();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
   });
 });

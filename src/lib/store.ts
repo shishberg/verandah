@@ -1,8 +1,8 @@
 import Database from "better-sqlite3";
 import { v7 as uuidv7 } from "uuid";
-import type { Session, CreateSessionArgs, UpdateSessionFields } from "./types.js";
+import type { Session, CreateSessionArgs, UpdateSessionFields, QueuedMessage } from "./types.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /**
  * V1 migration for fresh databases: create `sessions` table directly
@@ -26,6 +26,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   last_error      TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS queued_messages (
+  id          TEXT PRIMARY KEY,
+  session     TEXT NOT NULL,
+  message     TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (session) REFERENCES sessions(name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_queued_messages_session ON queued_messages(session, created_at);
 `;
 
 /**
@@ -62,6 +72,21 @@ DROP TABLE agents;
 `;
 
 /**
+ * V4 migration: add queued_messages table and index.
+ */
+const V4_MIGRATION = `
+CREATE TABLE queued_messages (
+  id          TEXT PRIMARY KEY,
+  session     TEXT NOT NULL,
+  message     TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (session) REFERENCES sessions(name)
+);
+
+CREATE INDEX idx_queued_messages_session ON queued_messages(session, created_at);
+`;
+
+/**
  * Ensure a datetime string from SQLite has a UTC 'Z' suffix.
  * SQLite's datetime('now') returns 'YYYY-MM-DD HH:MM:SS' (UTC but no suffix).
  */
@@ -83,6 +108,16 @@ function rowToSession(row: Record<string, unknown>): Session {
     maxTurns: (row.max_turns as number | null) ?? null,
     allowedTools: (row.allowed_tools as string | null) ?? null,
     lastError: (row.last_error as string | null) ?? null,
+    createdAt: ensureUtcSuffix(row.created_at as string),
+  };
+}
+
+/** Map a snake_case DB row to a camelCase QueuedMessage object. */
+function rowToQueuedMessage(row: Record<string, unknown>): QueuedMessage {
+  return {
+    id: row.id as string,
+    session: row.session as string,
+    message: row.message as string,
     createdAt: ensureUtcSuffix(row.created_at as string),
   };
 }
@@ -156,6 +191,11 @@ CREATE TABLE IF NOT EXISTS agents (
     if (currentVersion < 3) {
       this.db.exec(V3_MIGRATION);
       this.db.prepare("UPDATE schema_version SET version = ?").run(3);
+    }
+
+    if (currentVersion < 4) {
+      this.db.exec(V4_MIGRATION);
+      this.db.prepare("UPDATE schema_version SET version = ?").run(4);
     }
   }
 
@@ -257,11 +297,109 @@ CREATE TABLE IF NOT EXISTS agents (
     return this.getSession(name);
   }
 
-  /** Delete a session by name. Returns true if a row was deleted. */
+  /** Delete a session by name. Deletes queued messages first. Returns true if a row was deleted. */
   deleteSession(name: string): boolean {
+    const deleteInTransaction = this.db.transaction((sessionName: string) => {
+      this.db
+        .prepare("DELETE FROM queued_messages WHERE session = ?")
+        .run(sessionName);
+      const result = this.db
+        .prepare("DELETE FROM sessions WHERE name = ?")
+        .run(sessionName);
+      return result.changes > 0;
+    });
+    return deleteInTransaction(name);
+  }
+
+  // --- Queue methods ---
+
+  /** Enqueue a message for a session. Returns the created record. */
+  enqueueMessage(session: string, message: string): QueuedMessage {
+    const id = uuidv7();
+    this.db
+      .prepare(
+        `INSERT INTO queued_messages (id, session, message) VALUES (?, ?, ?)`,
+      )
+      .run(id, session, message);
+
+    const row = this.db
+      .prepare("SELECT * FROM queued_messages WHERE id = ?")
+      .get(id) as Record<string, unknown>;
+
+    return rowToQueuedMessage(row);
+  }
+
+  /** Dequeue the oldest message for a session. Returns null if empty. */
+  dequeueMessage(session: string): QueuedMessage | null {
+    const row = this.db
+      .prepare(
+        `DELETE FROM queued_messages
+         WHERE id = (SELECT id FROM queued_messages WHERE session = ? ORDER BY created_at ASC LIMIT 1)
+         RETURNING *`,
+      )
+      .get(session) as Record<string, unknown> | undefined;
+
+    return row ? rowToQueuedMessage(row) : null;
+  }
+
+  /** List queued messages, optionally filtered by session. Ordered by created_at ASC. */
+  listQueuedMessages(session?: string): QueuedMessage[] {
+    let rows: Record<string, unknown>[];
+    if (session) {
+      rows = this.db
+        .prepare(
+          "SELECT * FROM queued_messages WHERE session = ? ORDER BY created_at ASC",
+        )
+        .all(session) as Record<string, unknown>[];
+    } else {
+      rows = this.db
+        .prepare("SELECT * FROM queued_messages ORDER BY created_at ASC")
+        .all() as Record<string, unknown>[];
+    }
+    return rows.map(rowToQueuedMessage);
+  }
+
+  /** Count queued messages for a session. */
+  countQueuedMessages(session: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) as cnt FROM queued_messages WHERE session = ?",
+      )
+      .get(session) as { cnt: number };
+    return row.cnt;
+  }
+
+  /** Delete a single queued message by ID. Returns true if a row was deleted. */
+  deleteQueuedMessage(id: string): boolean {
     const result = this.db
-      .prepare("DELETE FROM sessions WHERE name = ?")
-      .run(name);
+      .prepare("DELETE FROM queued_messages WHERE id = ?")
+      .run(id);
+    return result.changes > 0;
+  }
+
+  /** Delete all queued messages for a session. Returns the count deleted. */
+  deleteQueuedMessagesForSession(session: string): number {
+    const result = this.db
+      .prepare("DELETE FROM queued_messages WHERE session = ?")
+      .run(session);
+    return result.changes;
+  }
+
+  /** Reassign all queued messages from one session to another. Returns count updated. */
+  reassignQueuedMessages(fromSession: string, toSession: string): number {
+    const result = this.db
+      .prepare(
+        "UPDATE queued_messages SET session = ? WHERE session = ?",
+      )
+      .run(toSession, fromSession);
+    return result.changes;
+  }
+
+  /** Reassign a single queued message to a different session. Returns true if updated. */
+  reassignQueuedMessage(id: string, toSession: string): boolean {
+    const result = this.db
+      .prepare("UPDATE queued_messages SET session = ? WHERE id = ?")
+      .run(toSession, id);
     return result.changes > 0;
   }
 
