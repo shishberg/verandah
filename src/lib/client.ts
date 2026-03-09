@@ -4,6 +4,21 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { Request, Response, NewArgs, SessionWithStatus, SessionStatus } from "./types.js";
 
+/**
+ * Result of a sendMessage call.
+ * - queued: false — message was delivered immediately (session was idle/failed).
+ * - queued: true — message was enqueued for later delivery (session was running/blocked).
+ */
+export type SendResult = {
+  queued: boolean;
+  name: string;
+  status: string;
+  /** Present when queued is true: the ID of the queued message. */
+  messageId?: string;
+  /** Present when queued is true: total queue depth after enqueue. */
+  queueDepth?: number;
+} & Partial<SessionWithStatus>;
+
 export type ClientOptions = {
   /** Path to the daemon entry script (dist/daemon.js). Required for auto-start. */
   daemonEntryPath?: string;
@@ -109,11 +124,11 @@ export class Client {
 
   /**
    * Send a message to an existing session.
-   * - Idle session: starts or resumes with message.
-   * - Failed session: resumes with message.
-   * - Running/blocked session: throws an error.
+   * - Idle session: starts or resumes with message immediately (queued: false).
+   * - Failed session: resumes with message immediately (queued: false).
+   * - Running/blocked session: enqueues the message for later delivery (queued: true).
    */
-  async sendMessage(name: string, message: string): Promise<SessionWithStatus> {
+  async sendMessage(name: string, message: string): Promise<SendResult> {
     const response = await this.send({
       command: "send",
       args: { name, message },
@@ -121,7 +136,7 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "send failed");
     }
-    return response.data as unknown as SessionWithStatus;
+    return response.data as unknown as SendResult;
   }
 
   /**

@@ -184,7 +184,8 @@ describe("vh send integration", () => {
       args: { name: "alpha", message: "fix the tests" },
     });
     expect(sendResp.ok).toBe(true);
-    const session = sendResp.data as unknown as SessionWithStatus;
+    const session = sendResp.data as unknown as SessionWithStatus & { queued: boolean };
+    expect(session.queued).toBe(false);
     expect(session.name).toBe("alpha");
     // Status should be running (session was just started).
     expect(session.status).toBe("running");
@@ -261,7 +262,7 @@ describe("vh send integration", () => {
     expect(resumeCall.options.resume).toBe("sess-2");
   });
 
-  it("send to running session fails", async () => {
+  it("send to running session queues the message", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -281,13 +282,24 @@ describe("vh send integration", () => {
     // Give the runner time to start.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Try to send — should fail because session is running.
+    // Send to running session — should be queued.
     const sendResp = await client.send({
       command: "send",
       args: { name: "gamma", message: "more work" },
     });
-    expect(sendResp.ok).toBe(false);
-    expect(sendResp.error).toBe("session 'gamma' is already running");
+    expect(sendResp.ok).toBe(true);
+    const data = sendResp.data as unknown as {
+      queued: boolean;
+      messageId: string;
+      name: string;
+      status: string;
+      queueDepth: number;
+    };
+    expect(data.queued).toBe(true);
+    expect(data.messageId).toBeDefined();
+    expect(data.name).toBe("gamma");
+    expect(data.status).toBe("running");
+    expect(data.queueDepth).toBe(1);
 
     // Clean up.
     ctrl.push(resultMessage("sess-gamma"));
@@ -295,7 +307,7 @@ describe("vh send integration", () => {
     await daemon.activeQueries.get("gamma")?.queryPromise;
   });
 
-  it("send to blocked session fails with guidance", async () => {
+  it("send to blocked session queues the message", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();
     daemon = new Daemon(vhHome);
@@ -345,14 +357,24 @@ describe("vh send integration", () => {
     // Give time for blocked status to be derivable.
     await new Promise((r) => setTimeout(r, 50));
 
-    // Try to send — should fail with guidance.
+    // Send to blocked session — should be queued.
     const sendResp = await client.send({
       command: "send",
       args: { name: "delta", message: "more work" },
     });
-    expect(sendResp.ok).toBe(false);
-    expect(sendResp.error).toContain("blocked waiting for approval");
-    expect(sendResp.error).toContain("vh permission allow delta");
+    expect(sendResp.ok).toBe(true);
+    const data = sendResp.data as unknown as {
+      queued: boolean;
+      messageId: string;
+      name: string;
+      status: string;
+      queueDepth: number;
+    };
+    expect(data.queued).toBe(true);
+    expect(data.messageId).toBeDefined();
+    expect(data.name).toBe("delta");
+    expect(data.status).toBe("blocked");
+    expect(data.queueDepth).toBe(1);
 
     // Clean up: resolve permission and finish.
     const runner = daemon.activeQueries.get("delta")!;
@@ -487,9 +509,10 @@ describe("vh send integration", () => {
     await client.newAgent({ name: "conv-test", cwd: "/tmp" });
 
     // Use convenience method.
-    const agent = await client.sendMessage("conv-test", "do work");
-    expect(agent.name).toBe("conv-test");
-    expect(agent.status).toBe("running");
+    const result = await client.sendMessage("conv-test", "do work");
+    expect(result.queued).toBe(false);
+    expect(result.name).toBe("conv-test");
+    expect(result.status).toBe("running");
   });
 
   it("sendMessage convenience method throws on error", async () => {
@@ -504,5 +527,61 @@ describe("vh send integration", () => {
     await expect(
       client.sendMessage("nonexistent", "hello"),
     ).rejects.toThrow("session 'nonexistent' not found");
+  });
+
+  it("send to running session increments queue depth", async () => {
+    vhHome = tmpVhHome();
+    socketFile = tmpSocketPath();
+    daemon = new Daemon(vhHome);
+    await daemon.start(socketFile);
+
+    const ctrl = createControllableResponse();
+    mockQuery.mockImplementation(() => ctrl.generator);
+
+    const client = new Client(socketFile);
+
+    // Create and start a session.
+    await client.send({
+      command: "new",
+      args: { name: "qdepth", cwd: "/tmp", prompt: "initial" },
+    });
+
+    // Give the runner time to start.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Queue first message.
+    const resp1 = await client.send({
+      command: "send",
+      args: { name: "qdepth", message: "msg-1" },
+    });
+    expect(resp1.ok).toBe(true);
+    const d1 = resp1.data as unknown as { queued: boolean; queueDepth: number };
+    expect(d1.queued).toBe(true);
+    expect(d1.queueDepth).toBe(1);
+
+    // Queue second message.
+    const resp2 = await client.send({
+      command: "send",
+      args: { name: "qdepth", message: "msg-2" },
+    });
+    expect(resp2.ok).toBe(true);
+    const d2 = resp2.data as unknown as { queued: boolean; queueDepth: number };
+    expect(d2.queued).toBe(true);
+    expect(d2.queueDepth).toBe(2);
+
+    // Queue third message.
+    const resp3 = await client.send({
+      command: "send",
+      args: { name: "qdepth", message: "msg-3" },
+    });
+    expect(resp3.ok).toBe(true);
+    const d3 = resp3.data as unknown as { queued: boolean; queueDepth: number };
+    expect(d3.queued).toBe(true);
+    expect(d3.queueDepth).toBe(3);
+
+    // Clean up.
+    ctrl.push(resultMessage("sess-qdepth"));
+    ctrl.done();
+    await daemon.activeQueries.get("qdepth")?.queryPromise;
   });
 });

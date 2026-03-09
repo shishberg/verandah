@@ -128,10 +128,9 @@ export function handleList(
 /**
  * Handle a `send` command: send a message to an existing session.
  *
- * - `idle` status (never started or finished): start or resume.
- * - `failed` status: resume or fresh start.
- * - `running` status: error.
- * - `blocked` status: error with guidance.
+ * - `idle` status (never started or finished): start or resume immediately.
+ * - `failed` status: resume or fresh start immediately.
+ * - `running` or `blocked` status: enqueue for later delivery.
  */
 export function handleSend(
   daemon: Daemon,
@@ -150,13 +149,21 @@ export function handleSend(
 
   switch (session.status) {
     case "running":
-      return { ok: false, error: `session '${sendArgs.name}' is already running` };
-
-    case "blocked":
+    case "blocked": {
+      // Enqueue the message for later delivery.
+      const queued = daemon.store.enqueueMessage(sendArgs.name, sendArgs.message);
+      const queueDepth = daemon.store.countQueuedMessages(sendArgs.name);
       return {
-        ok: false,
-        error: `session '${sendArgs.name}' is blocked waiting for approval. Use 'vh permission allow ${sendArgs.name}' to unblock it.`,
+        ok: true,
+        data: {
+          queued: true,
+          messageId: queued.id,
+          name: sendArgs.name,
+          status: session.status,
+          queueDepth,
+        } as unknown as Record<string, unknown>,
       };
+    }
 
     case "idle": {
       if (sess.sessionId) {
@@ -171,7 +178,10 @@ export function handleSend(
         runner.start(updatedSess, sendArgs.message);
       }
       const result = daemon.sessionWithStatus(daemon.store.getSession(sess.name)!);
-      return { ok: true, data: result as unknown as Record<string, unknown> };
+      return {
+        ok: true,
+        data: { queued: false, ...result } as unknown as Record<string, unknown>,
+      };
     }
 
     case "failed": {
@@ -186,7 +196,10 @@ export function handleSend(
         runner.start(freshSess, sendArgs.message);
       }
       const result = daemon.sessionWithStatus(daemon.store.getSession(sess.name)!);
-      return { ok: true, data: result as unknown as Record<string, unknown> };
+      return {
+        ok: true,
+        data: { queued: false, ...result } as unknown as Record<string, unknown>,
+      };
     }
 
     default:

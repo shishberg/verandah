@@ -65,7 +65,7 @@ Wire up the daemon's `onDone` callback to drain the queue.
 
 Implementation notes: Added private `drainQueue(name)` method on Daemon. The method guards against already-active runners and missing sessions. Tests use on-demand controllable generators and a `waitUntilIdle` polling helper to handle the async gap between drain creating a new runner and that runner settling.
 
-### [ ] 3. `vh send` — queue when busy
+### [x] 3. `vh send` — queue when busy
 
 Change `handleSend` to enqueue when the session is busy instead of erroring.
 

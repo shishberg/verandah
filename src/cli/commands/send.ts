@@ -8,6 +8,7 @@ import { resolveVHHome, socketPath } from "../../lib/config.js";
  *
  * If the session is `idle`, starts or resumes with the message.
  * If `failed`, resumes with the message.
+ * If `running` or `blocked`, enqueues the message for later delivery.
  * If `--wait` is provided, blocks until the session reaches a terminal status.
  */
 export function registerSendCommand(program: Command): void {
@@ -36,14 +37,16 @@ export function registerSendCommand(program: Command): void {
           vhHome,
         });
 
-        const agent = await client.sendMessage(name, resolvedMessage);
+        const result = await client.sendMessage(name, resolvedMessage);
 
-        // If --wait, block until session reaches terminal status.
-        if (opts.wait) {
-          const result = await client.wait(agent.name);
-          console.log(`${result.name} (${result.status})`);
+        if (result.queued) {
+          console.log(`message queued for '${result.name}' (queue depth: ${result.queueDepth})`);
+        } else if (opts.wait) {
+          // Message was delivered immediately; wait for the query to complete.
+          const waitResult = await client.wait(result.name);
+          console.log(`${waitResult.name} (${waitResult.status})`);
         } else {
-          console.log(`${agent.name} (${agent.status})`);
+          console.log(`${result.name} (${result.status})`);
         }
       } catch (err) {
         process.stderr.write(
