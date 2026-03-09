@@ -110,8 +110,12 @@ export function handleList(
   // Fetch all sessions from store (no status filter at DB level).
   const allSessions = daemon.store.listSessions();
 
-  // Derive status for each session.
-  const sessions = allSessions.map((s) => daemon.sessionWithStatus(s));
+  // Derive status and queue depth for each session.
+  const sessions = allSessions.map((s) => {
+    const withStatus = daemon.sessionWithStatus(s);
+    const queueDepth = daemon.store.countQueuedMessages(s.name);
+    return { ...withStatus, queueDepth };
+  });
 
   // Filter in memory if a status filter was provided.
   let filtered = sessions;

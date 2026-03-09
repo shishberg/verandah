@@ -108,8 +108,9 @@ export class Client {
 
   /**
    * List sessions, optionally filtered by status.
+   * Each session includes `queueDepth` — the number of queued messages.
    */
-  async list(statusFilter?: SessionStatus): Promise<SessionWithStatus[]> {
+  async list(statusFilter?: SessionStatus): Promise<(SessionWithStatus & { queueDepth: number })[]> {
     const args: Record<string, unknown> = {};
     if (statusFilter) {
       args.status = statusFilter;
@@ -118,7 +119,7 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "list failed");
     }
-    const data = response.data as unknown as { agents: SessionWithStatus[] };
+    const data = response.data as unknown as { agents: (SessionWithStatus & { queueDepth: number })[] };
     return data.agents;
   }
 

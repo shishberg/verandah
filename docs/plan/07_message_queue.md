@@ -115,7 +115,7 @@ Update `handleRemove` to check for queued messages.
   - `vh rm --force` with queued messages → success, messages deleted.
   - `vh rm` with no queued messages → success (unchanged).
 
-### [ ] 6. `vh ls` — queue depth column
+### [x] 6. `vh ls` — queue depth column
 
 Add queue depth to `vh ls` output.
 
@@ -129,6 +129,8 @@ Add queue depth to `vh ls` output.
 - Tests:
   - Queue depth column shows correct counts.
   - JSON output includes `queueDepth`.
+
+Implementation notes: Added `SessionWithQueueDepth` local type alias in `ls.ts` to avoid modifying global types. The `handleList` handler maps each session through `countQueuedMessages` and attaches `queueDepth` before returning. Tests added to `daemon.test.ts` covering: multiple sessions with varying queue depths, filtered list with queue depth, and zero queue depth for sessions with no queued messages.
 
 ### [ ] 7. `vh queue ls`
 

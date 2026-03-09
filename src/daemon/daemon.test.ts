@@ -529,3 +529,83 @@ describe("handleRemove queued message guard", () => {
     expect(daemon.store.getSession("rm-active-queued")).toBeNull();
   });
 });
+
+describe("handleList queue depth", () => {
+  let daemon: Daemon;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-daemon-ls-test-"));
+    daemon = new Daemon(tmpDir);
+  });
+
+  afterEach(async () => {
+    await daemon.shutdown();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("includes queueDepth for each session in list response", async () => {
+    // Create sessions with varying queue depths.
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+    createTestSession(daemon, "gamma");
+
+    daemon.store.enqueueMessage("alpha", "msg-1");
+    daemon.store.enqueueMessage("alpha", "msg-2");
+    daemon.store.enqueueMessage("alpha", "msg-3");
+    daemon.store.enqueueMessage("gamma", "msg-A");
+
+    const { handleList } = await import("./handlers.js");
+    const resp = handleList(daemon, {});
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { agents: Array<{ name: string; queueDepth: number }> };
+    const agents = data.agents;
+
+    // Find each session and check queue depth.
+    const alpha = agents.find((a) => a.name === "alpha");
+    const beta = agents.find((a) => a.name === "beta");
+    const gamma = agents.find((a) => a.name === "gamma");
+
+    expect(alpha).toBeDefined();
+    expect(alpha!.queueDepth).toBe(3);
+
+    expect(beta).toBeDefined();
+    expect(beta!.queueDepth).toBe(0);
+
+    expect(gamma).toBeDefined();
+    expect(gamma!.queueDepth).toBe(1);
+  });
+
+  it("includes queueDepth in filtered list response", async () => {
+    createTestSession(daemon, "idle-session");
+    daemon.store.enqueueMessage("idle-session", "queued msg");
+
+    const { handleList } = await import("./handlers.js");
+    const resp = handleList(daemon, { status: "idle" });
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { agents: Array<{ name: string; queueDepth: number; status: string }> };
+    const agents = data.agents;
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0].name).toBe("idle-session");
+    expect(agents[0].queueDepth).toBe(1);
+    expect(agents[0].status).toBe("idle");
+  });
+
+  it("shows queueDepth 0 when no messages are queued", async () => {
+    createTestSession(daemon, "empty-queue");
+
+    const { handleList } = await import("./handlers.js");
+    const resp = handleList(daemon, {});
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { agents: Array<{ name: string; queueDepth: number }> };
+    const agents = data.agents;
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0].queueDepth).toBe(0);
+  });
+});

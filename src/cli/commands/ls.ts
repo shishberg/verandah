@@ -2,6 +2,9 @@ import { Command } from "commander";
 import { Client } from "../../lib/client.js";
 import { resolveVHHome, socketPath, logPath } from "../../lib/config.js";
 import type { SessionWithStatus, SessionStatus } from "../../lib/types.js";
+
+/** A session with queue depth attached by the list handler. */
+type SessionWithQueueDepth = SessionWithStatus & { queueDepth: number };
 import { parseLogProgress, formatElapsed } from "../commands/wait.js";
 
 /**
@@ -27,7 +30,7 @@ export function registerLsCommand(program: Command): void {
         const statusFilter = opts.status
           ? (opts.status as SessionStatus)
           : undefined;
-        const agents = await client.list(statusFilter);
+        const agents = await client.list(statusFilter) as SessionWithQueueDepth[];
 
         if (opts.json) {
           console.log(JSON.stringify(agents, null, 2));
@@ -45,14 +48,14 @@ export function registerLsCommand(program: Command): void {
 
 /**
  * Format and print sessions as a table with columns:
- * NAME, STATUS, MODEL, CWD, LAST RUN
+ * NAME, STATUS, MODEL, CWD, QUEUE, LAST RUN
  */
-function printTable(agents: SessionWithStatus[], vhHome: string): void {
+function printTable(agents: SessionWithQueueDepth[], vhHome: string): void {
   if (agents.length === 0) {
     return;
   }
 
-  const headers = ["NAME", "STATUS", "MODEL", "CWD", "LAST RUN"];
+  const headers = ["NAME", "STATUS", "MODEL", "CWD", "QUEUE", "LAST RUN"];
 
   // Build rows.
   const rows: string[][] = agents.map((agent) => [
@@ -60,6 +63,7 @@ function printTable(agents: SessionWithStatus[], vhHome: string): void {
     formatStatus(agent),
     agent.model ?? "-",
     agent.cwd,
+    String(agent.queueDepth),
     formatLastRun(agent, vhHome),
   ]);
 
