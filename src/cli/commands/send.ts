@@ -37,9 +37,14 @@ export function registerSendCommand(program: Command): void {
           vhHome,
         });
 
-        const result = await client.sendMessage(name, resolvedMessage);
+        const result = await client.sendMessage(name, resolvedMessage, { wait: opts.wait });
 
-        if (result.queued) {
+        if (opts.wait && result.queued) {
+          // --wait with queued message: the daemon held the connection open
+          // and returned the session data when the message's query completed.
+          // The result is the session with status at completion time.
+          console.log(`${result.name} (${result.status})`);
+        } else if (result.queued) {
           console.log(`message queued for '${result.name}' (queue depth: ${result.queueDepth})`);
         } else if (opts.wait) {
           // Message was delivered immediately; wait for the query to complete.

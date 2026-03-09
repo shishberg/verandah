@@ -36,6 +36,12 @@ export class Daemon {
   /** Per-agent wait listeners. Each waiter resolves when the agent reaches a terminal status. */
   readonly waiters: Map<string, Set<(session: SessionWithStatus) => void>> = new Map();
 
+  /** Per-message wait listeners. Each waiter resolves when the specific queued message's query completes. */
+  readonly messageWaiters: Map<string, Set<(session: SessionWithStatus) => void>> = new Map();
+
+  /** Tracks which queued message ID each session is currently processing. Keyed by agent name. */
+  readonly activeMessageIds: Map<string, string> = new Map();
+
   constructor(vhHome: string, options?: DaemonOptions) {
     this.vhHome = vhHome;
     this.store = new Store(dbPath(vhHome));
@@ -54,6 +60,7 @@ export class Daemon {
       blockTimeoutMs: this.blockTimeoutMs,
       onDone: (name) => {
         this.activeQueries.delete(name);
+        this.notifyMessageWaiters(name);
         this.notifyWaiters(name);
         this.drainQueue(name);
       },
@@ -69,6 +76,8 @@ export class Daemon {
    * Attempt to drain the next queued message for a session.
    * Called after a query finishes. If a message exists in the queue,
    * dequeues it and starts a new query, creating the drain loop.
+   * Records the message ID so that message-specific waiters can be notified
+   * when the query completes.
    */
   private drainQueue(name: string): void {
     // Don't drain if a runner is already active for this session
@@ -80,6 +89,9 @@ export class Daemon {
 
     const sess = this.store.getSession(name);
     if (!sess) return;
+
+    // Record which message ID this session is processing.
+    this.activeMessageIds.set(name, msg.id);
 
     const newRunner = this.createRunner(name);
     if (sess.sessionId) {
@@ -138,6 +150,8 @@ export class Daemon {
 
     // Clear all pending waiters.
     this.waiters.clear();
+    this.messageWaiters.clear();
+    this.activeMessageIds.clear();
 
     return new Promise<void>((resolve) => {
       const cleanup = () => {
@@ -291,6 +305,32 @@ export class Daemon {
       listener(session);
     }
     listeners.clear();
+  }
+
+  /**
+   * Notify message-specific waiters when a queued message's query completes.
+   * Looks up the message ID that was being processed for this session,
+   * notifies any registered waiters, and cleans up.
+   */
+  private notifyMessageWaiters(name: string): void {
+    const messageId = this.activeMessageIds.get(name);
+    if (!messageId) return;
+
+    this.activeMessageIds.delete(name);
+
+    const listeners = this.messageWaiters.get(messageId);
+    if (!listeners || listeners.size === 0) return;
+
+    const sess = this.store.getSession(name);
+    if (!sess) return;
+
+    const session = this.sessionWithStatus(sess);
+
+    for (const listener of listeners) {
+      listener(session);
+    }
+    listeners.clear();
+    this.messageWaiters.delete(messageId);
   }
 
   /**

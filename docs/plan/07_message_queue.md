@@ -81,7 +81,7 @@ Change `handleSend` to enqueue when the session is busy instead of erroring.
   - Send to running session → `queued: true`, message ID returned, correct queue depth.
   - Send to blocked session → `queued: true`.
 
-### [ ] 4. `vh send --wait` with queued messages
+### [x] 4. `vh send --wait` with queued messages
 
 When `--wait` is used and the message was queued, block until *that specific message's* query completes.
 
@@ -94,6 +94,8 @@ When `--wait` is used and the message was queued, block until *that specific mes
 - Tests:
   - `--wait` on queued message → blocks until that message's query completes.
   - Multiple `--wait` callers on different queued messages.
+
+Implementation notes: Added `messageWaiters` (keyed by message ID) and `activeMessageIds` (keyed by session name) maps on Daemon. `drainQueue` records the message ID in `activeMessageIds` before starting the query. `onDone` calls `notifyMessageWaiters` which looks up the active message ID, notifies registered listeners, and cleans up. `handleSend` return type changed to `Response | Promise<Response>` to support holding the connection open. `client.sendMessage` accepts optional `{ wait }` option and passes it through. The CLI `send.ts` checks `opts.wait && result.queued` first to handle the queued-wait case (daemon returns `{ queued: true, ...session }` when the message's query completes).
 
 ---
 

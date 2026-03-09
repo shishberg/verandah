@@ -127,11 +127,16 @@ export class Client {
    * - Idle session: starts or resumes with message immediately (queued: false).
    * - Failed session: resumes with message immediately (queued: false).
    * - Running/blocked session: enqueues the message for later delivery (queued: true).
+   * - With wait: true and queued message, blocks until that message's query completes.
    */
-  async sendMessage(name: string, message: string): Promise<SendResult> {
+  async sendMessage(name: string, message: string, opts?: { wait?: boolean }): Promise<SendResult> {
+    const args: Record<string, unknown> = { name, message };
+    if (opts?.wait) {
+      args.wait = true;
+    }
     const response = await this.send({
       command: "send",
-      args: { name, message },
+      args,
     });
     if (!response.ok) {
       throw new Error(response.error ?? "send failed");

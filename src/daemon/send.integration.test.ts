@@ -529,6 +529,132 @@ describe("vh send integration", () => {
     ).rejects.toThrow("session 'nonexistent' not found");
   });
 
+  it("send --wait on queued message blocks until that message's query completes", async () => {
+    vhHome = tmpVhHome();
+    socketFile = tmpSocketPath();
+    daemon = new Daemon(vhHome);
+    await daemon.start(socketFile);
+
+    const controllers: ReturnType<typeof createControllableResponse>[] = [];
+    mockQuery.mockImplementation(() => {
+      const ctrl = createControllableResponse();
+      controllers.push(ctrl);
+      return ctrl.generator;
+    });
+
+    const client = new Client(socketFile);
+
+    // Create and start a session (stays running because controller not finished).
+    await client.send({
+      command: "new",
+      args: { name: "wait-q", cwd: "/tmp", prompt: "initial" },
+    });
+
+    // Give runner time to start.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Send --wait to running session — message gets queued, connection held.
+    const waitClient = new Client(socketFile);
+    const waitPromise = waitClient.send({
+      command: "send",
+      args: { name: "wait-q", message: "queued msg", wait: true },
+    });
+
+    // Give time for the waiter to register.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Verify the message was queued.
+    expect(daemon.store.countQueuedMessages("wait-q")).toBe(1);
+
+    // Finish the first query — drain starts the queued message.
+    controllers[0].push(resultMessage("sess-wait-q"));
+    controllers[0].done();
+
+    // Give drain time to start the next query.
+    await new Promise((r) => setTimeout(r, 100));
+
+    // The queued message's query is now running — wait should still be pending.
+    expect(daemon.activeQueries.has("wait-q")).toBe(true);
+
+    // Finish the queued message's query.
+    controllers[1].push(resultMessage("sess-wait-q"));
+    controllers[1].done();
+
+    // Wait should now resolve.
+    const waitResp = await waitPromise;
+    expect(waitResp.ok).toBe(true);
+    const data = waitResp.data as unknown as SessionWithStatus & { queued: boolean };
+    expect(data.queued).toBe(true);
+    expect(data.name).toBe("wait-q");
+    expect(data.status).toBe("idle");
+  });
+
+  it("multiple --wait callers on different queued messages resolve independently", async () => {
+    vhHome = tmpVhHome();
+    socketFile = tmpSocketPath();
+    daemon = new Daemon(vhHome);
+    await daemon.start(socketFile);
+
+    const controllers: ReturnType<typeof createControllableResponse>[] = [];
+    mockQuery.mockImplementation(() => {
+      const ctrl = createControllableResponse();
+      controllers.push(ctrl);
+      return ctrl.generator;
+    });
+
+    const client = new Client(socketFile);
+
+    // Create and start a session.
+    await client.send({
+      command: "new",
+      args: { name: "multi-w", cwd: "/tmp", prompt: "initial" },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Send two --wait messages to the running session.
+    const waitClient1 = new Client(socketFile);
+    const waitPromise1 = waitClient1.send({
+      command: "send",
+      args: { name: "multi-w", message: "msg-A", wait: true },
+    });
+
+    const waitClient2 = new Client(socketFile);
+    const waitPromise2 = waitClient2.send({
+      command: "send",
+      args: { name: "multi-w", message: "msg-B", wait: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Both messages should be queued.
+    expect(daemon.store.countQueuedMessages("multi-w")).toBe(2);
+
+    // Finish the initial query — drain starts msg-A.
+    controllers[0].push(resultMessage("sess-multi-w"));
+    controllers[0].done();
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Finish msg-A's query — waiter1 should resolve, drain starts msg-B.
+    controllers[1].push(resultMessage("sess-multi-w"));
+    controllers[1].done();
+
+    const resp1 = await waitPromise1;
+    expect(resp1.ok).toBe(true);
+    expect((resp1.data as unknown as SessionWithStatus).name).toBe("multi-w");
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Finish msg-B's query — waiter2 should resolve.
+    controllers[2].push(resultMessage("sess-multi-w"));
+    controllers[2].done();
+
+    const resp2 = await waitPromise2;
+    expect(resp2.ok).toBe(true);
+    expect((resp2.data as unknown as SessionWithStatus).name).toBe("multi-w");
+  });
+
   it("send to running session increments queue depth", async () => {
     vhHome = tmpVhHome();
     socketFile = tmpSocketPath();

@@ -288,4 +288,136 @@ describe("Daemon queue drain", () => {
 
     expect(resumeFlags[1]).toBeUndefined();
   });
+
+  it("notifies messageWaiters when a queued message's query completes", async () => {
+    const controllers: ReturnType<typeof createControllableResponse>[] = [];
+
+    mockQuery.mockImplementation(() => {
+      const ctrl = createControllableResponse();
+      controllers.push(ctrl);
+      return ctrl.generator;
+    });
+
+    // Create session and start first query.
+    const sess = createTestSession(daemon, "waiter-test");
+    const runner = daemon.createRunner("waiter-test");
+    runner.start(sess, "first message");
+
+    // Wait for the first mock to be called.
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Enqueue a message and register a message waiter for it.
+    const queued = daemon.store.enqueueMessage("waiter-test", "second message");
+    const waiterPromise = new Promise<string>((resolve) => {
+      const listeners = new Set<(s: { status: string }) => void>();
+      listeners.add((s) => resolve(s.status));
+      daemon.messageWaiters.set(queued.id, listeners as unknown as Set<(s: import("../lib/types.js").SessionWithStatus) => void>);
+    });
+
+    // Finish first query — drain starts second message.
+    controllers[0].done();
+    if (runner.queryPromise) await runner.queryPromise;
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Second query is running; finish it.
+    controllers[1].done();
+
+    // The waiter should resolve with the session status.
+    const status = await waiterPromise;
+    expect(status).toBe("idle");
+
+    // Message waiter should be cleaned up.
+    expect(daemon.messageWaiters.has(queued.id)).toBe(false);
+  });
+
+  it("notifies multiple messageWaiters for different queued messages", async () => {
+    const controllers: ReturnType<typeof createControllableResponse>[] = [];
+
+    mockQuery.mockImplementation(() => {
+      const ctrl = createControllableResponse();
+      controllers.push(ctrl);
+      return ctrl.generator;
+    });
+
+    // Create session and start first query.
+    const sess = createTestSession(daemon, "multi-waiter");
+    const runner = daemon.createRunner("multi-waiter");
+    runner.start(sess, "first message");
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Enqueue two messages and register waiters for each.
+    const queued1 = daemon.store.enqueueMessage("multi-waiter", "msg-A");
+    const queued2 = daemon.store.enqueueMessage("multi-waiter", "msg-B");
+
+    const results: string[] = [];
+
+    const waiter1 = new Promise<void>((resolve) => {
+      const listeners = new Set<(s: { status: string; name: string }) => void>();
+      listeners.add((s) => { results.push(`A:${s.status}`); resolve(); });
+      daemon.messageWaiters.set(queued1.id, listeners as unknown as Set<(s: import("../lib/types.js").SessionWithStatus) => void>);
+    });
+
+    const waiter2 = new Promise<void>((resolve) => {
+      const listeners = new Set<(s: { status: string; name: string }) => void>();
+      listeners.add((s) => { results.push(`B:${s.status}`); resolve(); });
+      daemon.messageWaiters.set(queued2.id, listeners as unknown as Set<(s: import("../lib/types.js").SessionWithStatus) => void>);
+    });
+
+    // Finish first query — drain starts msg-A.
+    controllers[0].done();
+    if (runner.queryPromise) await runner.queryPromise;
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Finish msg-A — should notify waiter1, then drain starts msg-B.
+    controllers[1].done();
+    await waiter1;
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Finish msg-B — should notify waiter2.
+    controllers[2].done();
+    await waiter2;
+
+    expect(results).toEqual(["A:idle", "B:idle"]);
+  });
+
+  it("records activeMessageIds during drain", async () => {
+    const controllers: ReturnType<typeof createControllableResponse>[] = [];
+
+    mockQuery.mockImplementation(() => {
+      const ctrl = createControllableResponse();
+      controllers.push(ctrl);
+      return ctrl.generator;
+    });
+
+    const sess = createTestSession(daemon, "active-msg-id");
+    const runner = daemon.createRunner("active-msg-id");
+    runner.start(sess, "first");
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // No active message ID for the initial query (not from queue).
+    expect(daemon.activeMessageIds.has("active-msg-id")).toBe(false);
+
+    const queued = daemon.store.enqueueMessage("active-msg-id", "second");
+
+    // Finish the first query — drain should set activeMessageIds.
+    controllers[0].done();
+    if (runner.queryPromise) await runner.queryPromise;
+    await new Promise((r) => setTimeout(r, 20));
+
+    // While the second query is running, the message ID should be tracked
+    // (it gets cleared in onDone, so check before finishing).
+    // Actually, activeMessageIds is set before createRunner, and cleared in
+    // notifyMessageWaiters which runs in onDone. Since the query is still
+    // running, it hasn't been cleared yet.
+    expect(daemon.activeMessageIds.get("active-msg-id")).toBe(queued.id);
+
+    // Finish the second query.
+    controllers[1].done();
+    await waitUntilIdle(daemon, "active-msg-id");
+
+    // After completion, activeMessageIds should be cleaned up.
+    expect(daemon.activeMessageIds.has("active-msg-id")).toBe(false);
+  });
 });

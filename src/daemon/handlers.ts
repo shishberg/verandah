@@ -131,11 +131,12 @@ export function handleList(
  * - `idle` status (never started or finished): start or resume immediately.
  * - `failed` status: resume or fresh start immediately.
  * - `running` or `blocked` status: enqueue for later delivery.
+ * - With `--wait` and queued: block until that specific message's query completes.
  */
 export function handleSend(
   daemon: Daemon,
   args: Record<string, unknown>,
-): Response {
+): Response | Promise<Response> {
   const sendArgs = args as unknown as SendArgs;
 
   // Look up session by name.
@@ -153,15 +154,38 @@ export function handleSend(
       // Enqueue the message for later delivery.
       const queued = daemon.store.enqueueMessage(sendArgs.name, sendArgs.message);
       const queueDepth = daemon.store.countQueuedMessages(sendArgs.name);
+      const queuedData = {
+        queued: true,
+        messageId: queued.id,
+        name: sendArgs.name,
+        status: session.status,
+        queueDepth,
+      };
+
+      if (sendArgs.wait) {
+        // Register a message waiter that resolves when this specific
+        // message's query completes.
+        return new Promise<Response>((resolve) => {
+          let listeners = daemon.messageWaiters.get(queued.id);
+          if (!listeners) {
+            listeners = new Set();
+            daemon.messageWaiters.set(queued.id, listeners);
+          }
+          listeners.add((updatedSession) => {
+            resolve({
+              ok: true,
+              data: {
+                queued: true,
+                ...updatedSession,
+              } as unknown as Record<string, unknown>,
+            });
+          });
+        });
+      }
+
       return {
         ok: true,
-        data: {
-          queued: true,
-          messageId: queued.id,
-          name: sendArgs.name,
-          status: session.status,
-          queueDepth,
-        } as unknown as Record<string, unknown>,
+        data: queuedData as unknown as Record<string, unknown>,
       };
     }
 
