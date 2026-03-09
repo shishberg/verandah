@@ -132,7 +132,7 @@ Add queue depth to `vh ls` output.
 
 Implementation notes: Added `SessionWithQueueDepth` local type alias in `ls.ts` to avoid modifying global types. The `handleList` handler maps each session through `countQueuedMessages` and attaches `queueDepth` before returning. Tests added to `daemon.test.ts` covering: multiple sessions with varying queue depths, filtered list with queue depth, and zero queue depth for sessions with no queued messages.
 
-### [ ] 7. `vh queue ls`
+### [x] 7. `vh queue ls`
 
 New subcommand to list queued messages.
 
@@ -155,6 +155,8 @@ New subcommand to list queued messages.
   - List filtered by session.
   - Empty list.
   - JSON output.
+
+Implementation notes: Created `src/cli/commands/queue.ts` with the `vh queue` command group and `ls` subcommand. The table format shows `ID`, `SESSION`, `MESSAGE` (truncated to 40 chars with ellipsis), and `AGE` (relative time). Added `handleQueueList` handler in `handlers.ts`, wired `"queue-list"` in `daemon.ts`, and added `queueList` client method. Tests in `daemon.test.ts` cover: listing all messages across sessions, filtering by session, empty list, empty list for specific session, and JSON-suitable output shape.
 
 ### [ ] 8. `vh queue delete`
 

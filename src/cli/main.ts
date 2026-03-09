@@ -9,6 +9,7 @@ import { registerLogsCommand } from "./commands/logs.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerWaitCommand } from "./commands/wait.js";
 import { registerPermissionCommand } from "./commands/permission.js";
+import { registerQueueCommand } from "./commands/queue.js";
 
 const program = new Command();
 
@@ -36,6 +37,7 @@ registerLogsCommand(program);
 registerWhoamiCommand(program);
 registerWaitCommand(program);
 registerPermissionCommand(program);
+registerQueueCommand(program);
 
 // Use parseAsync so the process properly awaits async action handlers,
 // preventing unhandled promise rejections.

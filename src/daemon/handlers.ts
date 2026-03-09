@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, QueueListArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -547,6 +547,23 @@ export function handleNotifyStart(
   }
 
   return { ok: true };
+}
+
+/**
+ * Handle a `queue-list` command: list queued messages.
+ *
+ * Optionally filtered by session name.
+ */
+export function handleQueueList(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const queueArgs = args as unknown as QueueListArgs;
+  const messages = daemon.store.listQueuedMessages(queueArgs.session);
+  return {
+    ok: true,
+    data: { messages } as unknown as Record<string, unknown>,
+  };
 }
 
 /**

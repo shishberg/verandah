@@ -2,7 +2,7 @@ import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import type { Request, Response, NewArgs, SessionWithStatus, SessionStatus } from "./types.js";
+import type { Request, Response, NewArgs, SessionWithStatus, SessionStatus, QueuedMessage } from "./types.js";
 
 /**
  * Result of a sendMessage call.
@@ -292,6 +292,22 @@ export class Client {
       throw new Error(response.error ?? "permission answer failed");
     }
     return response.data as unknown as { name: string; status: string };
+  }
+
+  /**
+   * List queued messages, optionally filtered by session.
+   */
+  async queueList(session?: string): Promise<QueuedMessage[]> {
+    const args: Record<string, unknown> = {};
+    if (session) {
+      args.session = session;
+    }
+    const response = await this.send({ command: "queue-list", args });
+    if (!response.ok) {
+      throw new Error(response.error ?? "queue list failed");
+    }
+    const data = response.data as unknown as { messages: QueuedMessage[] };
+    return data.messages;
   }
 
   /**

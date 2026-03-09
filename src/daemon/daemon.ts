@@ -5,7 +5,7 @@ import { dbPath } from "../lib/config.js";
 import type { Session, Request, Response, WaitArgs, SessionWithStatus } from "../lib/types.js";
 import { sessionStatus } from "../lib/types.js";
 import { AgentRunner } from "./agent-runner.js";
-import { handleNew, handleList, handleSend, handleStop, handleRemove, handleLogs, handleWhoami, handlePermission, handleNotifyStart, handleNotifyExit } from "./handlers.js";
+import { handleNew, handleList, handleSend, handleStop, handleRemove, handleLogs, handleWhoami, handlePermission, handleNotifyStart, handleNotifyExit, handleQueueList } from "./handlers.js";
 
 export type DaemonOptions = {
   /** Idle timeout in milliseconds. Daemon exits when idle for this long. 0 = no timeout. */
@@ -388,6 +388,7 @@ export class Daemon {
     permission: (args) => handlePermission(this, args),
     "notify-start": (args) => handleNotifyStart(this, args),
     "notify-exit": (args) => handleNotifyExit(this, args),
+    "queue-list": (args) => handleQueueList(this, args),
     shutdown: () => {
       // Schedule shutdown after response is sent so the client receives { ok: true }.
       setImmediate(() => {

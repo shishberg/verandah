@@ -530,6 +530,115 @@ describe("handleRemove queued message guard", () => {
   });
 });
 
+describe("handleQueueList", () => {
+  let daemon: Daemon;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-daemon-queuels-test-"));
+    daemon = new Daemon(tmpDir);
+  });
+
+  afterEach(async () => {
+    await daemon.shutdown();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists all queued messages across sessions", async () => {
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+
+    daemon.store.enqueueMessage("alpha", "msg-1");
+    daemon.store.enqueueMessage("beta", "msg-2");
+    daemon.store.enqueueMessage("alpha", "msg-3");
+
+    const { handleQueueList } = await import("./handlers.js");
+    const resp = handleQueueList(daemon, {});
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { messages: Array<{ id: string; session: string; message: string; createdAt: string }> };
+    expect(data.messages).toHaveLength(3);
+
+    // Verify FIFO order (created_at ASC).
+    expect(data.messages[0].message).toBe("msg-1");
+    expect(data.messages[0].session).toBe("alpha");
+    expect(data.messages[1].message).toBe("msg-2");
+    expect(data.messages[1].session).toBe("beta");
+    expect(data.messages[2].message).toBe("msg-3");
+    expect(data.messages[2].session).toBe("alpha");
+
+    // Each message should have id and createdAt.
+    for (const msg of data.messages) {
+      expect(msg.id).toBeTruthy();
+      expect(msg.createdAt).toBeTruthy();
+    }
+  });
+
+  it("lists queued messages filtered by session", async () => {
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+
+    daemon.store.enqueueMessage("alpha", "alpha-msg-1");
+    daemon.store.enqueueMessage("beta", "beta-msg-1");
+    daemon.store.enqueueMessage("alpha", "alpha-msg-2");
+
+    const { handleQueueList } = await import("./handlers.js");
+    const resp = handleQueueList(daemon, { session: "alpha" });
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { messages: Array<{ session: string; message: string }> };
+    expect(data.messages).toHaveLength(2);
+    expect(data.messages[0].message).toBe("alpha-msg-1");
+    expect(data.messages[0].session).toBe("alpha");
+    expect(data.messages[1].message).toBe("alpha-msg-2");
+    expect(data.messages[1].session).toBe("alpha");
+  });
+
+  it("returns empty array when no messages are queued", async () => {
+    createTestSession(daemon, "empty");
+
+    const { handleQueueList } = await import("./handlers.js");
+    const resp = handleQueueList(daemon, {});
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { messages: Array<unknown> };
+    expect(data.messages).toHaveLength(0);
+  });
+
+  it("returns empty array for session with no messages", async () => {
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+    daemon.store.enqueueMessage("alpha", "only-alpha");
+
+    const { handleQueueList } = await import("./handlers.js");
+    const resp = handleQueueList(daemon, { session: "beta" });
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { messages: Array<unknown> };
+    expect(data.messages).toHaveLength(0);
+  });
+
+  it("returns full QueuedMessage shape suitable for JSON output", async () => {
+    createTestSession(daemon, "json-test");
+    daemon.store.enqueueMessage("json-test", "hello world");
+
+    const { handleQueueList } = await import("./handlers.js");
+    const resp = handleQueueList(daemon, {});
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { messages: Array<{ id: string; session: string; message: string; createdAt: string }> };
+    expect(data.messages).toHaveLength(1);
+
+    const msg = data.messages[0];
+    expect(typeof msg.id).toBe("string");
+    expect(msg.id).toHaveLength(36); // UUIDv7 format
+    expect(msg.session).toBe("json-test");
+    expect(msg.message).toBe("hello world");
+    expect(typeof msg.createdAt).toBe("string");
+  });
+});
+
 describe("handleList queue depth", () => {
   let daemon: Daemon;
   let tmpDir: string;
