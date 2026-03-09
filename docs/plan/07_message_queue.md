@@ -12,9 +12,6 @@ When completing a task: mark it `[x]`, commit the plan change and implementation
 
 Every task must leave the codebase in a stable state with passing tests.
 
-## Note on schema version
-
-The spec says "v2 → v3" for the `queued_messages` migration, but the codebase already uses `SCHEMA_VERSION = 3` (the sessions rename migration). The actual migration will be **v3 → v4**, with `SCHEMA_VERSION` updated to `4`.
 
 ---
 

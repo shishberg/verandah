@@ -12,7 +12,7 @@ Follows the conventions from [01_Verandah.md](01_Verandah.md). This spec describ
 
 ## Database
 
-### Schema addition (v3)
+### Schema addition (v4)
 
 ```sql
 CREATE TABLE queued_messages (
@@ -35,7 +35,7 @@ CREATE INDEX idx_queued_messages_session ON queued_messages(session, created_at)
 | `message` | The message text to deliver as a prompt. |
 | `created_at` | When the message was enqueued. Used for FIFO ordering. |
 
-### Migration (v2 → v3)
+### Migration (v3 → v4)
 
 ```sql
 CREATE TABLE queued_messages (
@@ -49,7 +49,7 @@ CREATE TABLE queued_messages (
 CREATE INDEX idx_queued_messages_session ON queued_messages(session, created_at);
 ```
 
-`SCHEMA_VERSION` is updated from `2` to `3`.
+`SCHEMA_VERSION` is updated from `3` to `4`.
 
 ---
 
