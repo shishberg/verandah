@@ -162,7 +162,7 @@ CREATE TABLE agents (
 
 | Field | Description |
 |---|---|
-| `id` | Unique identifier (ULID). Immutable. |
+| `id` | Unique identifier (UUIDv7). Immutable. |
 | `name` | Human-friendly handle. Unique. Immutable after creation. |
 | `session_id` | Claude Code session ID. Set after the first `claude` process starts and emits it. NULL if no process has run yet. |
 | `pid` | PID of the currently running `claude` process. NULL when not running. |

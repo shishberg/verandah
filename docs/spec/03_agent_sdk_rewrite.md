@@ -216,7 +216,7 @@ The daemon registers a `canUseTool` callback on every `query()` call. The callba
 1. Creates a `PendingPermission` record:
    ```typescript
    type PendingPermission = {
-     id: string;            // unique request ID (ulid)
+     id: string;            // unique request ID (UUIDv7)
      toolName: string;
      toolInput: Record<string, unknown>;
      resolve: (result: PermissionResult) => void;

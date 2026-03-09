@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { ulid } from "ulid";
+import { v7 as uuidv7 } from "uuid";
 import type { Session, CreateSessionArgs, UpdateSessionFields } from "./types.js";
 
 const SCHEMA_VERSION = 3;
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS agents (
 
   /** Create a new session and return it. */
   createSession(args: CreateSessionArgs): Session {
-    const id = ulid();
+    const id = uuidv7();
     this.db
       .prepare(
         `INSERT INTO sessions (id, name, cwd, prompt, model, permission_mode, max_turns, allowed_tools)

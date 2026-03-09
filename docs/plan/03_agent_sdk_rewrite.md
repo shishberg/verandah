@@ -27,7 +27,7 @@ Remove all Go source code and set up the TypeScript project from scratch.
   - `@anthropic-ai/claude-agent-sdk`
   - `better-sqlite3` + `@types/better-sqlite3`
   - `commander`
-  - `ulid`
+  - `uuid`
 - Install dev dependencies:
   - `typescript`, `tsx`
   - `vitest`

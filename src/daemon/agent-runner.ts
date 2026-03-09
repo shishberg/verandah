@@ -6,7 +6,7 @@ import type {
   PermissionResult as SDKPermissionResult,
   Query,
 } from "@anthropic-ai/claude-agent-sdk";
-import { ulid } from "ulid";
+import { v7 as uuidv7 } from "uuid";
 import type { Store } from "../lib/store.js";
 import type { Session, PendingPermission, PermissionResult } from "../lib/types.js";
 import { fileURLToPath } from "node:url";
@@ -237,7 +237,7 @@ export class AgentRunner {
   ): Promise<SDKPermissionResult> {
     return new Promise<SDKPermissionResult>((resolve) => {
       this.pendingPermission = {
-        id: ulid(),
+        id: uuidv7(),
         toolName,
         toolInput,
         resolve: resolve as (result: PermissionResult) => void,

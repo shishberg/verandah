@@ -209,13 +209,13 @@ describe("Store", () => {
       expect(session.allowedTools).toBe("Bash,Read");
     });
 
-    it("generates a unique ULID for each session", () => {
+    it("generates a unique UUIDv7 for each session", () => {
       const a = store.createSession({ name: "a", cwd: "/tmp" });
       const b = store.createSession({ name: "b", cwd: "/tmp" });
       expect(a.id).not.toBe(b.id);
-      // ULIDs are 26 characters
-      expect(a.id).toHaveLength(26);
-      expect(b.id).toHaveLength(26);
+      // UUIDv7 are 36 characters (8-4-4-4-12 with dashes)
+      expect(a.id).toHaveLength(36);
+      expect(b.id).toHaveLength(36);
     });
 
     it("throws on duplicate name", () => {

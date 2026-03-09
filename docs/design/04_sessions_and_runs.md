@@ -116,10 +116,14 @@ Crash recovery becomes trivial: on daemon startup, there are no active queries. 
 
 ### CLI — what the user sees
 
-The CLI commands don't change. `vh new`, `vh send`, `vh stop`, `vh rm`, `vh ls`, `vh logs` all work the same way. The only visible differences:
+The CLI commands don't change. `vh new`, `vh send`, `vh stop`, `vh rm`, `vh ls`, `vh logs` all work the same way. The visible differences:
 
 - `vh ls` shows "idle" instead of "stopped" or "created." This is a better word — the session isn't broken, it's just not doing anything.
 - Daemon crash recovery is seamless. Previously-"running" sessions show as "idle" after restart, which is accurate — the query is gone, the session is resumable.
+
+**`vh stop` semantics.** `vh stop alpha` aborts the active query (calls `abortController.abort()`). The session immediately becomes idle — there is no "stopped" status. `vh stop` on an already-idle session is a no-op. `vh stop --all` aborts all active queries; every session becomes idle.
+
+**Failed sessions are sticky.** If a query ends with an error, `last_error` is set and the session shows as "failed" in `vh ls` until the next `vh send` clears it. There's no explicit "acknowledge error" command — if you're done with the session, `vh rm` it. If you want to retry, `vh send` starts a new query and clears the error. This is a known rough edge but adding a `vh clear-error` command isn't worth it today.
 
 ### Features that become natural
 
