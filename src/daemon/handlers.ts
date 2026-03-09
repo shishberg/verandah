@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, QueueListArgs, QueueDeleteArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, QueueListArgs, QueueDeleteArgs, QueueAssignArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -582,6 +582,68 @@ export function handleQueueDelete(
     return { ok: false, error: `queued message '${queueArgs.id}' not found` };
   }
   return { ok: true };
+}
+
+/**
+ * Handle a `queue-assign` command: reassign queued messages to a different session.
+ *
+ * Single message: reassign one message by ID to a target session.
+ * All messages: reassign all messages from one session to another (--all).
+ *
+ * After reassignment, checks if the target session is idle and triggers drain
+ * if so.
+ */
+export function handleQueueAssign(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const assignArgs = args as unknown as QueueAssignArgs;
+
+  // Validate target session exists.
+  const targetSession = daemon.store.getSession(assignArgs.toSession);
+  if (!targetSession) {
+    return { ok: false, error: `session '${assignArgs.toSession}' not found` };
+  }
+
+  if (assignArgs.all) {
+    // Reassign all messages from one session to another.
+    if (!assignArgs.fromSession) {
+      return { ok: false, error: "fromSession is required with --all" };
+    }
+    const count = daemon.store.reassignQueuedMessages(
+      assignArgs.fromSession,
+      assignArgs.toSession,
+    );
+
+    // Try to drain the target session if it's idle.
+    daemon.tryDrain(assignArgs.toSession);
+
+    return {
+      ok: true,
+      data: { assigned: count } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // Single message reassignment.
+  if (!assignArgs.id) {
+    return { ok: false, error: "message ID is required" };
+  }
+
+  const updated = daemon.store.reassignQueuedMessage(
+    assignArgs.id,
+    assignArgs.toSession,
+  );
+  if (!updated) {
+    return { ok: false, error: `queued message '${assignArgs.id}' not found` };
+  }
+
+  // Try to drain the target session if it's idle.
+  daemon.tryDrain(assignArgs.toSession);
+
+  return {
+    ok: true,
+    data: { assigned: 1 } as unknown as Record<string, unknown>,
+  };
 }
 
 /**

@@ -324,6 +324,36 @@ export class Client {
   }
 
   /**
+   * Reassign a single queued message to a different session. Throws if the
+   * message or target session is not found.
+   */
+  async queueAssign(id: string, toSession: string): Promise<void> {
+    const response = await this.send({
+      command: "queue-assign",
+      args: { id, toSession },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "queue assign failed");
+    }
+  }
+
+  /**
+   * Reassign all queued messages from one session to another.
+   * Returns the number of messages reassigned.
+   */
+  async queueAssignAll(fromSession: string, toSession: string): Promise<number> {
+    const response = await this.send({
+      command: "queue-assign",
+      args: { all: true, fromSession, toSession },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "queue assign all failed");
+    }
+    const data = response.data as unknown as { assigned: number };
+    return data.assigned;
+  }
+
+  /**
    * Send a shutdown command to the daemon.
    * Ignores connection-reset errors since the daemon closes during shutdown.
    */

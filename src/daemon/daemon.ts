@@ -5,7 +5,7 @@ import { dbPath } from "../lib/config.js";
 import type { Session, Request, Response, WaitArgs, SessionWithStatus } from "../lib/types.js";
 import { sessionStatus } from "../lib/types.js";
 import { AgentRunner } from "./agent-runner.js";
-import { handleNew, handleList, handleSend, handleStop, handleRemove, handleLogs, handleWhoami, handlePermission, handleNotifyStart, handleNotifyExit, handleQueueList, handleQueueDelete } from "./handlers.js";
+import { handleNew, handleList, handleSend, handleStop, handleRemove, handleLogs, handleWhoami, handlePermission, handleNotifyStart, handleNotifyExit, handleQueueList, handleQueueDelete, handleQueueAssign } from "./handlers.js";
 
 export type DaemonOptions = {
   /** Idle timeout in milliseconds. Daemon exits when idle for this long. 0 = no timeout. */
@@ -62,7 +62,7 @@ export class Daemon {
         this.activeQueries.delete(name);
         this.notifyMessageWaiters(name);
         this.notifyWaiters(name);
-        this.drainQueue(name);
+        this.tryDrain(name);
       },
       onStatusChange: (name) => {
         this.notifyWaiters(name);
@@ -74,12 +74,13 @@ export class Daemon {
 
   /**
    * Attempt to drain the next queued message for a session.
-   * Called after a query finishes. If a message exists in the queue,
-   * dequeues it and starts a new query, creating the drain loop.
+   * Called after a query finishes or after reassigning messages to a session.
+   * If a message exists in the queue, dequeues it and starts a new query,
+   * creating the drain loop.
    * Records the message ID so that message-specific waiters can be notified
    * when the query completes.
    */
-  private drainQueue(name: string): void {
+  tryDrain(name: string): void {
     // Don't drain if a runner is already active for this session
     // (shouldn't happen, but guard against it).
     if (this.activeQueries.has(name)) return;
@@ -390,6 +391,7 @@ export class Daemon {
     "notify-exit": (args) => handleNotifyExit(this, args),
     "queue-list": (args) => handleQueueList(this, args),
     "queue-delete": (args) => handleQueueDelete(this, args),
+    "queue-assign": (args) => handleQueueAssign(this, args),
     shutdown: () => {
       // Schedule shutdown after response is sent so the client receives { ok: true }.
       setImmediate(() => {

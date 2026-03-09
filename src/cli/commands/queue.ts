@@ -7,8 +7,10 @@ import type { QueuedMessage } from "../../lib/types.js";
  * `vh queue` — command group for managing the message queue.
  *
  * Subcommands:
- *   vh queue ls [session]      — list queued messages
- *   vh queue delete <messageID> — delete a queued message
+ *   vh queue ls [session]                       — list queued messages
+ *   vh queue delete <messageID>                  — delete a queued message
+ *   vh queue assign <messageID> <toSession>      — reassign a single message
+ *   vh queue assign --all <fromSession> <toSession> — reassign all messages
  */
 export function registerQueueCommand(program: Command): void {
   const queue = program
@@ -66,6 +68,48 @@ export function registerQueueCommand(program: Command): void {
         process.exitCode = 1;
       }
     });
+  queue
+    .command("assign")
+    .description("Reassign queued messages to a different session")
+    .argument("<first>", "Message ID (single) or source session name (with --all)")
+    .argument("<second>", "Target session name")
+    .option("--all", "Reassign all messages from a session")
+    .action(
+      async (
+        first: string,
+        second: string,
+        opts: { all?: boolean },
+      ) => {
+        try {
+          const vhHome = resolveVHHome();
+          const client = new Client(socketPath(vhHome), {
+            daemonEntryPath: Client.resolveDaemonEntryPath(),
+            vhHome,
+          });
+
+          if (opts.all) {
+            // --all <fromSession> <toSession>
+            const fromSession = first;
+            const toSession = second;
+            const count = await client.queueAssignAll(fromSession, toSession);
+            console.log(
+              `assigned ${count} message(s) from '${fromSession}' to '${toSession}'`,
+            );
+          } else {
+            // <messageID> <toSession>
+            const messageID = first;
+            const toSession = second;
+            await client.queueAssign(messageID, toSession);
+            console.log(`assigned message '${messageID}' to '${toSession}'`);
+          }
+        } catch (err) {
+          process.stderr.write(
+            `error: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          process.exitCode = 1;
+        }
+      },
+    );
 }
 
 /**

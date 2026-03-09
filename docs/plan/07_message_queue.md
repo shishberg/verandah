@@ -175,7 +175,7 @@ New subcommand to delete a queued message.
   - Delete existing message → success.
   - Delete non-existent message → error.
 
-### [ ] 9. `vh queue assign`
+### [x] 9. `vh queue assign`
 
 New subcommand to reassign queued messages.
 
@@ -201,6 +201,8 @@ New subcommand to reassign queued messages.
   - Assign all from session → success, count returned.
   - Reassignment to idle session triggers drain.
   - Reassignment to busy session → messages wait.
+
+Implementation notes: Renamed `drainQueue` to `tryDrain` and made it public so both the `onDone` callback and `handleQueueAssign` can call it. The handler validates target session existence before reassignment and calls `tryDrain` after both single and bulk reassignment. The CLI `assign` subcommand uses two positional arguments (`<first>` and `<second>`) with `--all` determining interpretation: without `--all`, first=messageID and second=toSession; with `--all`, first=fromSession and second=toSession. Tests cover all six specified scenarios using controllable generators to manage busy/idle states.
 
 ---
 

@@ -755,3 +755,199 @@ describe("handleQueueDelete", () => {
     expect(resp.error).toBe("queued message 'non-existent-id' not found");
   });
 });
+
+describe("handleQueueAssign", () => {
+  let daemon: Daemon;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-daemon-qassign-test-"));
+    daemon = new Daemon(tmpDir);
+  });
+
+  afterEach(async () => {
+    await daemon.shutdown();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("assigns a single message to another session", async () => {
+    // Make beta busy so drain doesn't immediately consume the message.
+    const ctrl = createControllableResponse();
+    mockQuery.mockImplementation(() => ctrl.generator);
+
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+
+    // Start a query on beta so it's busy.
+    const betaSess = daemon.store.getSession("beta")!;
+    const runner = daemon.createRunner("beta");
+    runner.start(betaSess, "running");
+    await new Promise((r) => setTimeout(r, 10));
+
+    const msg = daemon.store.enqueueMessage("alpha", "move me");
+
+    const { handleQueueAssign } = await import("./handlers.js");
+    const resp = handleQueueAssign(daemon, { id: msg.id, toSession: "beta" });
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { assigned: number };
+    expect(data.assigned).toBe(1);
+
+    // Message should now belong to beta (still in queue because beta is busy).
+    const alphaMessages = daemon.store.listQueuedMessages("alpha");
+    const betaMessages = daemon.store.listQueuedMessages("beta");
+    expect(alphaMessages).toHaveLength(0);
+    expect(betaMessages).toHaveLength(1);
+    expect(betaMessages[0].message).toBe("move me");
+
+    // Clean up: remove queued messages to prevent drain from starting new
+    // queries that would hang, then finish the running query.
+    daemon.store.deleteQueuedMessagesForSession("beta");
+    ctrl.done();
+    if (runner.queryPromise) await runner.queryPromise;
+  });
+
+  it("returns error when target session not found", async () => {
+    createTestSession(daemon, "alpha");
+    const msg = daemon.store.enqueueMessage("alpha", "msg");
+
+    const { handleQueueAssign } = await import("./handlers.js");
+    const resp = handleQueueAssign(daemon, {
+      id: msg.id,
+      toSession: "nonexistent",
+    });
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error).toBe("session 'nonexistent' not found");
+
+    // Message should still belong to alpha.
+    expect(daemon.store.listQueuedMessages("alpha")).toHaveLength(1);
+  });
+
+  it("returns error when message not found", async () => {
+    createTestSession(daemon, "beta");
+
+    const { handleQueueAssign } = await import("./handlers.js");
+    const resp = handleQueueAssign(daemon, {
+      id: "no-such-id",
+      toSession: "beta",
+    });
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error).toBe("queued message 'no-such-id' not found");
+  });
+
+  it("assigns all messages from one session to another", async () => {
+    // Make beta busy so drain doesn't consume messages.
+    const ctrl = createControllableResponse();
+    mockQuery.mockImplementation(() => ctrl.generator);
+
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+
+    // Start a query on beta so it's busy.
+    const betaSess = daemon.store.getSession("beta")!;
+    const runner = daemon.createRunner("beta");
+    runner.start(betaSess, "running");
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    daemon.store.enqueueMessage("alpha", "msg-1");
+    daemon.store.enqueueMessage("alpha", "msg-2");
+    daemon.store.enqueueMessage("alpha", "msg-3");
+
+    const { handleQueueAssign } = await import("./handlers.js");
+    const resp = handleQueueAssign(daemon, {
+      all: true,
+      fromSession: "alpha",
+      toSession: "beta",
+    });
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { assigned: number };
+    expect(data.assigned).toBe(3);
+
+    // All messages should now belong to beta (still in queue because beta is busy).
+    expect(daemon.store.listQueuedMessages("alpha")).toHaveLength(0);
+    const betaMessages = daemon.store.listQueuedMessages("beta");
+    expect(betaMessages).toHaveLength(3);
+    expect(betaMessages.map((m) => m.message)).toEqual([
+      "msg-1",
+      "msg-2",
+      "msg-3",
+    ]);
+
+    // Clean up: remove queued messages to prevent drain from starting new
+    // queries that would hang, then finish the running query.
+    daemon.store.deleteQueuedMessagesForSession("beta");
+    ctrl.done();
+    if (runner.queryPromise) await runner.queryPromise;
+  });
+
+  it("reassignment to idle session triggers drain", async () => {
+    const startedPrompts: string[] = [];
+
+    mockQuery.mockImplementation((params: { prompt: string }) => {
+      startedPrompts.push(params.prompt);
+      return createMockResponse([]);
+    });
+
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+
+    // Enqueue a message in alpha.
+    daemon.store.enqueueMessage("alpha", "drain me");
+
+    // Beta is idle — reassigning should trigger drain.
+    const { handleQueueAssign } = await import("./handlers.js");
+    handleQueueAssign(daemon, {
+      all: true,
+      fromSession: "alpha",
+      toSession: "beta",
+    });
+
+    // Wait for drain to complete.
+    await waitUntilIdle(daemon, "beta");
+
+    expect(startedPrompts).toEqual(["drain me"]);
+    expect(daemon.store.countQueuedMessages("beta")).toBe(0);
+  });
+
+  it("reassignment to busy session does not trigger drain", async () => {
+    const ctrl = createControllableResponse();
+    mockQuery.mockImplementation(() => ctrl.generator);
+
+    createTestSession(daemon, "alpha");
+    createTestSession(daemon, "beta");
+
+    // Start a query on beta so it's busy.
+    const sess = daemon.store.getSession("beta")!;
+    const runner = daemon.createRunner("beta");
+    runner.start(sess, "running");
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Enqueue messages in alpha, then reassign to busy beta.
+    daemon.store.enqueueMessage("alpha", "wait-msg-1");
+    daemon.store.enqueueMessage("alpha", "wait-msg-2");
+
+    const { handleQueueAssign } = await import("./handlers.js");
+    const resp = handleQueueAssign(daemon, {
+      all: true,
+      fromSession: "alpha",
+      toSession: "beta",
+    });
+
+    expect(resp.ok).toBe(true);
+
+    // Messages should be in beta's queue, not drained.
+    expect(daemon.store.countQueuedMessages("beta")).toBe(2);
+
+    // Clean up: remove queued messages to prevent drain from starting new
+    // queries that would hang, then finish the running query.
+    daemon.store.deleteQueuedMessagesForSession("beta");
+    ctrl.done();
+    if (runner.queryPromise) await runner.queryPromise;
+  });
+});
