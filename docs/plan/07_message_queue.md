@@ -52,7 +52,7 @@ Add the `queued_messages` table and all store methods.
 
 ## Phase 2: Daemon
 
-### [ ] 2. Queue drain on query completion
+### [x] 2. Queue drain on query completion
 
 Wire up the daemon's `onDone` callback to drain the queue.
 
@@ -62,6 +62,8 @@ Wire up the daemon's `onDone` callback to drain the queue.
 - `src/daemon/daemon.test.ts` (or `handlers.test.ts`):
   - Mock SDK query that finishes immediately. Enqueue messages before the query finishes. Verify they are dequeued and started in FIFO order.
   - Queue drain terminates when queue is empty.
+
+Implementation notes: Added private `drainQueue(name)` method on Daemon. The method guards against already-active runners and missing sessions. Tests use on-demand controllable generators and a `waitUntilIdle` polling helper to handle the async gap between drain creating a new runner and that runner settling.
 
 ### [ ] 3. `vh send` — queue when busy
 

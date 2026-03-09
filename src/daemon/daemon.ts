@@ -55,6 +55,7 @@ export class Daemon {
       onDone: (name) => {
         this.activeQueries.delete(name);
         this.notifyWaiters(name);
+        this.drainQueue(name);
       },
       onStatusChange: (name) => {
         this.notifyWaiters(name);
@@ -62,6 +63,30 @@ export class Daemon {
     });
     this.activeQueries.set(agentName, runner);
     return runner;
+  }
+
+  /**
+   * Attempt to drain the next queued message for a session.
+   * Called after a query finishes. If a message exists in the queue,
+   * dequeues it and starts a new query, creating the drain loop.
+   */
+  private drainQueue(name: string): void {
+    // Don't drain if a runner is already active for this session
+    // (shouldn't happen, but guard against it).
+    if (this.activeQueries.has(name)) return;
+
+    const msg = this.store.dequeueMessage(name);
+    if (!msg) return;
+
+    const sess = this.store.getSession(name);
+    if (!sess) return;
+
+    const newRunner = this.createRunner(name);
+    if (sess.sessionId) {
+      newRunner.resume(sess, msg.message);
+    } else {
+      newRunner.start(sess, msg.message);
+    }
   }
 
   /**
