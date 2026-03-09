@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { Daemon } from "./daemon.js";
-import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, QueueListArgs, Response } from "../lib/types.js";
+import type { NewArgs, ListArgs, SendArgs, StopArgs, RemoveArgs, LogsArgs, WhoamiArgs, PermissionArgs, NotifyStartArgs, NotifyExitArgs, QueueListArgs, QueueDeleteArgs, Response } from "../lib/types.js";
 import { generateUniqueName } from "../lib/names.js";
 import { logPath } from "../lib/config.js";
 
@@ -564,6 +564,24 @@ export function handleQueueList(
     ok: true,
     data: { messages } as unknown as Record<string, unknown>,
   };
+}
+
+/**
+ * Handle a `queue-delete` command: delete a single queued message by ID.
+ *
+ * Returns success if the message was found and deleted.
+ * Returns error if the message was not found.
+ */
+export function handleQueueDelete(
+  daemon: Daemon,
+  args: Record<string, unknown>,
+): Response {
+  const queueArgs = args as unknown as QueueDeleteArgs;
+  const deleted = daemon.store.deleteQueuedMessage(queueArgs.id);
+  if (!deleted) {
+    return { ok: false, error: `queued message '${queueArgs.id}' not found` };
+  }
+  return { ok: true };
 }
 
 /**

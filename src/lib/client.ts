@@ -311,6 +311,19 @@ export class Client {
   }
 
   /**
+   * Delete a queued message by ID. Throws if the message is not found.
+   */
+  async queueDelete(id: string): Promise<void> {
+    const response = await this.send({
+      command: "queue-delete",
+      args: { id },
+    });
+    if (!response.ok) {
+      throw new Error(response.error ?? "queue delete failed");
+    }
+  }
+
+  /**
    * Send a shutdown command to the daemon.
    * Ignores connection-reset errors since the daemon closes during shutdown.
    */

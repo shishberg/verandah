@@ -7,7 +7,8 @@ import type { QueuedMessage } from "../../lib/types.js";
  * `vh queue` — command group for managing the message queue.
  *
  * Subcommands:
- *   vh queue ls [session]   — list queued messages
+ *   vh queue ls [session]      — list queued messages
+ *   vh queue delete <messageID> — delete a queued message
  */
 export function registerQueueCommand(program: Command): void {
   const queue = program
@@ -36,6 +37,28 @@ export function registerQueueCommand(program: Command): void {
         } else {
           printQueueTable(messages);
         }
+      } catch (err) {
+        process.stderr.write(
+          `error: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+      }
+    });
+
+  queue
+    .command("delete")
+    .description("Delete a queued message")
+    .argument("<messageID>", "ID of the queued message to delete")
+    .action(async (messageID: string) => {
+      try {
+        const vhHome = resolveVHHome();
+        const client = new Client(socketPath(vhHome), {
+          daemonEntryPath: Client.resolveDaemonEntryPath(),
+          vhHome,
+        });
+
+        await client.queueDelete(messageID);
+        console.log(`deleted queued message '${messageID}'`);
       } catch (err) {
         process.stderr.write(
           `error: ${err instanceof Error ? err.message : String(err)}\n`,

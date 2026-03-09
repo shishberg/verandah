@@ -718,3 +718,40 @@ describe("handleList queue depth", () => {
     expect(agents[0].queueDepth).toBe(0);
   });
 });
+
+describe("handleQueueDelete", () => {
+  let daemon: Daemon;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-daemon-qdel-test-"));
+    daemon = new Daemon(tmpDir);
+  });
+
+  afterEach(async () => {
+    await daemon.shutdown();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("deletes an existing queued message", async () => {
+    createTestSession(daemon, "alpha");
+    const msg = daemon.store.enqueueMessage("alpha", "to be deleted");
+
+    const { handleQueueDelete } = await import("./handlers.js");
+    const resp = handleQueueDelete(daemon, { id: msg.id });
+
+    expect(resp.ok).toBe(true);
+
+    // Message should be gone.
+    expect(daemon.store.listQueuedMessages("alpha")).toHaveLength(0);
+  });
+
+  it("returns error for non-existent message", async () => {
+    const { handleQueueDelete } = await import("./handlers.js");
+    const resp = handleQueueDelete(daemon, { id: "non-existent-id" });
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error).toBe("queued message 'non-existent-id' not found");
+  });
+});

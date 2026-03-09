@@ -158,7 +158,7 @@ New subcommand to list queued messages.
 
 Implementation notes: Created `src/cli/commands/queue.ts` with the `vh queue` command group and `ls` subcommand. The table format shows `ID`, `SESSION`, `MESSAGE` (truncated to 40 chars with ellipsis), and `AGE` (relative time). Added `handleQueueList` handler in `handlers.ts`, wired `"queue-list"` in `daemon.ts`, and added `queueList` client method. Tests in `daemon.test.ts` cover: listing all messages across sessions, filtering by session, empty list, empty list for specific session, and JSON-suitable output shape.
 
-### [ ] 8. `vh queue delete`
+### [x] 8. `vh queue delete`
 
 New subcommand to delete a queued message.
 
