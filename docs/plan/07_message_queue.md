@@ -101,7 +101,7 @@ Implementation notes: Added `messageWaiters` (keyed by message ID) and `activeMe
 
 ## Phase 3: CLI commands
 
-### [ ] 5. `vh rm` — queued message guard
+### [x] 5. `vh rm` — queued message guard
 
 Update `handleRemove` to check for queued messages.
 

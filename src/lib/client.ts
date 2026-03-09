@@ -176,8 +176,9 @@ export class Client {
 
   /**
    * Remove a session by name. If force is true, stops the session first.
+   * Returns the count of deleted queued messages.
    */
-  async remove(name: string, force?: boolean): Promise<void> {
+  async remove(name: string, force?: boolean): Promise<{ deletedMessages: number }> {
     const response = await this.send({
       command: "rm",
       args: { name, force: force ?? false },
@@ -185,6 +186,8 @@ export class Client {
     if (!response.ok) {
       throw new Error(response.error ?? "remove failed");
     }
+    const data = response.data as unknown as { deletedMessages?: number } | undefined;
+    return { deletedMessages: data?.deletedMessages ?? 0 };
   }
 
   /**

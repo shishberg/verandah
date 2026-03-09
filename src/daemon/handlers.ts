@@ -302,7 +302,8 @@ export async function handleStop(
  *
  * - If session not found: error.
  * - If session has an active query and no force: error.
- * - If force and active query: stop first, then remove.
+ * - If session has queued messages and no force: error.
+ * - If force: stop active query (if any), delete queued messages and session.
  * - Remove: delete from store + delete log file.
  */
 export async function handleRemove(
@@ -316,26 +317,40 @@ export async function handleRemove(
     return { ok: false, error: `session '${rmArgs.name}' not found` };
   }
 
-  // If session has an active query, require --force.
-  if (daemon.activeQueries.has(rmArgs.name)) {
-    if (!rmArgs.force) {
-      return {
-        ok: false,
-        error: `session '${rmArgs.name}' is running. Use --force to stop and remove.`,
-      };
-    }
+  const isRunning = daemon.activeQueries.has(rmArgs.name);
 
-    // Stop the session first.
-    const runner = daemon.activeQueries.get(rmArgs.name);
-    if (runner) {
-      runner.stop();
-      if (runner.queryPromise) {
-        await runner.queryPromise.catch(() => {});
-      }
+  // If session has an active query, require --force.
+  if (isRunning && !rmArgs.force) {
+    return {
+      ok: false,
+      error: `session '${rmArgs.name}' is running. Use --force to stop and remove.`,
+    };
+  }
+
+  // Check queued messages before stopping (stopping may trigger drain).
+  const queuedCount = daemon.store.countQueuedMessages(rmArgs.name);
+
+  // If session has queued messages, require --force.
+  if (queuedCount > 0 && !rmArgs.force) {
+    return {
+      ok: false,
+      error: `session '${rmArgs.name}' has ${queuedCount} queued message(s). Use 'vh queue assign' to reassign them or --force to delete them.`,
+    };
+  }
+
+  // Stop the active runner if present. Stopping triggers onDone which may
+  // drain the queue and start a new runner, so we loop until no runner is
+  // active. This is safe because deleteSession below removes all queued
+  // messages, so drain will eventually find an empty queue.
+  while (daemon.activeQueries.has(rmArgs.name)) {
+    const runner = daemon.activeQueries.get(rmArgs.name)!;
+    runner.stop();
+    if (runner.queryPromise) {
+      await runner.queryPromise.catch(() => {});
     }
   }
 
-  // Delete from store.
+  // Delete from store (deleteSession handles queued messages in its transaction).
   daemon.store.deleteSession(rmArgs.name);
 
   // Delete log file if it exists.
@@ -345,7 +360,10 @@ export async function handleRemove(
     // Log file may not exist; ignore.
   }
 
-  return { ok: true };
+  return {
+    ok: true,
+    data: { deletedMessages: queuedCount } as unknown as Record<string, unknown>,
+  };
 }
 
 /**

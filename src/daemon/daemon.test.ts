@@ -421,3 +421,111 @@ describe("Daemon queue drain", () => {
     expect(daemon.activeMessageIds.has("active-msg-id")).toBe(false);
   });
 });
+
+describe("handleRemove queued message guard", () => {
+  let daemon: Daemon;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vh-daemon-rm-test-"));
+    daemon = new Daemon(tmpDir);
+  });
+
+  afterEach(async () => {
+    await daemon.shutdown();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rm with queued messages and no force returns error", async () => {
+    createTestSession(daemon, "rm-guard");
+    daemon.store.enqueueMessage("rm-guard", "pending msg 1");
+    daemon.store.enqueueMessage("rm-guard", "pending msg 2");
+
+    const { handleRemove } = await import("./handlers.js");
+    const resp = await handleRemove(daemon, { name: "rm-guard" });
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error).toBe(
+      "session 'rm-guard' has 2 queued message(s). Use 'vh queue assign' to reassign them or --force to delete them.",
+    );
+
+    // Session and messages should still exist.
+    expect(daemon.store.getSession("rm-guard")).not.toBeNull();
+    expect(daemon.store.countQueuedMessages("rm-guard")).toBe(2);
+  });
+
+  it("rm --force with queued messages deletes messages and session", async () => {
+    createTestSession(daemon, "rm-force");
+    daemon.store.enqueueMessage("rm-force", "msg A");
+    daemon.store.enqueueMessage("rm-force", "msg B");
+    daemon.store.enqueueMessage("rm-force", "msg C");
+
+    const { handleRemove } = await import("./handlers.js");
+    const resp = await handleRemove(daemon, { name: "rm-force", force: true });
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { deletedMessages: number };
+    expect(data.deletedMessages).toBe(3);
+
+    // Session and messages should be gone.
+    expect(daemon.store.getSession("rm-force")).toBeNull();
+    expect(daemon.store.countQueuedMessages("rm-force")).toBe(0);
+  });
+
+  it("rm with no queued messages succeeds without force", async () => {
+    createTestSession(daemon, "rm-clean");
+
+    const { handleRemove } = await import("./handlers.js");
+    const resp = await handleRemove(daemon, { name: "rm-clean" });
+
+    expect(resp.ok).toBe(true);
+    const data = resp.data as unknown as { deletedMessages: number };
+    expect(data.deletedMessages).toBe(0);
+
+    // Session should be gone.
+    expect(daemon.store.getSession("rm-clean")).toBeNull();
+  });
+
+  it("rm with active query and queued messages requires force", async () => {
+    // Wire the abort signal so stop() actually terminates the generator.
+    // This applies to both the initial query and any drain-spawned queries.
+    mockQuery.mockImplementation(
+      (params: { options?: { abortController?: AbortController } }) => {
+        const ctrl = createControllableResponse();
+        const signal = params.options?.abortController?.signal;
+        if (signal) {
+          signal.addEventListener("abort", () => ctrl.done(), { once: true });
+        }
+        return ctrl.generator;
+      },
+    );
+
+    const sess = createTestSession(daemon, "rm-active-queued");
+    const runner = daemon.createRunner("rm-active-queued");
+    runner.start(sess, "running task");
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Enqueue a message while query is running.
+    daemon.store.enqueueMessage("rm-active-queued", "queued msg");
+
+    const { handleRemove } = await import("./handlers.js");
+
+    // Without force: fails because session is running (checked before queue).
+    const resp = await handleRemove(daemon, { name: "rm-active-queued" });
+    expect(resp.ok).toBe(false);
+    expect(resp.error).toContain("is running");
+
+    // Session and queued messages should still exist.
+    expect(daemon.store.getSession("rm-active-queued")).not.toBeNull();
+    expect(daemon.store.countQueuedMessages("rm-active-queued")).toBe(1);
+
+    // With force: stops query (and any drain-spawned queries) then deletes everything.
+    const forceResp = await handleRemove(daemon, { name: "rm-active-queued", force: true });
+    expect(forceResp.ok).toBe(true);
+    const data = forceResp.data as unknown as { deletedMessages: number };
+    expect(data.deletedMessages).toBe(1);
+    expect(daemon.store.getSession("rm-active-queued")).toBeNull();
+  });
+});

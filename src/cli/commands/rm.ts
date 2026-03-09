@@ -23,7 +23,10 @@ export function registerRmCommand(program: Command): void {
           vhHome,
         });
 
-        await client.remove(name, opts.force);
+        const result = await client.remove(name, opts.force);
+        if (result.deletedMessages > 0) {
+          console.log(`deleted ${result.deletedMessages} queued message(s)`);
+        }
         console.log(`removed ${name}`);
       } catch (err) {
         process.stderr.write(
